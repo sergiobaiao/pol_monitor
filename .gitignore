@@ -1,0 +1,32 @@
+# Segredos e dados do usuário (bancos SQLite com configurações, cache e histórico)
+.env
+.env.*
+.dev.vars
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+
+# Cloudflare / Node
+node_modules/
+.wrangler/
+
+# .NET
+bin/
+obj/
+desktop-wpf/publish/
+*.user
+.vs/
+
+# Skills de agentes de terceiros e material de referência externo
+.agents/
+.claude/
+skills-lock.json
+*.pdf
+
+# Especificação interna da API do POL (gerada por download_specs.py com o seu JWT)
+swagger/*.json

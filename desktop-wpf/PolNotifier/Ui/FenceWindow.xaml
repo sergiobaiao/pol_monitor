@@ -1,0 +1,49 @@
+<Window x:Class="PolNotifier.Ui.FenceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="POL ADV — Widget" WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" ShowActivated="False" MinWidth="260" MinHeight="50">
+    <Border Background="{StaticResource Bg1}" CornerRadius="12">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Cabeçalho arrastável -->
+            <Border x:Name="Header" Background="{StaticResource Bg2}" CornerRadius="10" Height="38" Margin="6,6,6,4"
+                    MouseLeftButtonDown="OnHeaderDown">
+                <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Content="🔄" Style="{StaticResource IconButton}" Margin="2,0,6,0" ToolTip="Sincronizar agora" Click="OnSync"/>
+                    <Button x:Name="BtnCollapse" DockPanel.Dock="Right" Content="▾" Style="{StaticResource IconButton}" FontSize="14" ToolTip="Recolher / expandir" Click="OnCollapse"/>
+                    <TextBlock Text="⚖️ Prazos &amp; Tarefas POL" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Fg}" VerticalAlignment="Center" Margin="10,0"/>
+                </DockPanel>
+            </Border>
+
+            <Grid x:Name="Body" Grid.Row="1" Margin="6,0,6,2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <UniformGrid x:Name="Pills" Columns="4" Margin="0,2,0,6"/>
+                <Border Grid.Row="1" Background="#121215" CornerRadius="8">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4">
+                        <StackPanel x:Name="List"/>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <DockPanel x:Name="Footer" Grid.Row="2" Height="24" Margin="10,0,4,4">
+                <Thumb DockPanel.Dock="Right" Width="18" Cursor="SizeNWSE" DragDelta="OnResize" DragCompleted="OnResizeDone">
+                    <Thumb.Template>
+                        <ControlTemplate>
+                            <TextBlock Text="⤡" FontSize="14" FontWeight="Bold" Foreground="{StaticResource FgDim}" Background="Transparent" VerticalAlignment="Center"/>
+                        </ControlTemplate>
+                    </Thumb.Template>
+                </Thumb>
+                <TextBlock x:Name="LblFooter" Text="Aguardando sincronização..." FontSize="10" Foreground="{StaticResource FgDim}" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Grid>
+    </Border>
+</Window>

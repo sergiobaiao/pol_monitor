@@ -1,0 +1,14 @@
+name = "pol-adv-web"
+main = "app-web.py"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["python_workers", "disable_python_external_sdk"]  # usa o SDK `workers` embutido (sem pywrangler)
+
+# Execução automática em background na borda da Cloudflare (Crons)
+[triggers]
+crons = ["*/5 * * * *"] # Monitor 24h: a cada 5 min; cada usuário respeita o próprio intervalo de checagem
+
+# Persistência de usuários/sessões/refresh tokens (sem ela, o cron não tem usuários para notificar).
+# Crie com `npx wrangler kv namespace create POL_STORE` e descomente com o id retornado:
+# [[kv_namespaces]]
+# binding = "POL_STORE"
+# id = "<id do namespace>"

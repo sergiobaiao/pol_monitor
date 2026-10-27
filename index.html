@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>POL ADV - Swagger UI Interativo</title>
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.18.2/swagger-ui.css" />
+  <link rel="icon" type="image/png" href="https://office.pol.adv.br/content/images/pol-adv-favicon-96x96.png" />
+  <style>
+    html {
+      box-sizing: border-box;
+      overflow: -moz-scrollbars-vertical;
+      overflow-y: scroll;
+    }
+    *, *:before, *:after {
+      box-sizing: inherit;
+    }
+    body {
+      margin: 0;
+      background: #fafafa;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .custom-header {
+      background: #111827;
+      color: #ffffff;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      position: sticky;
+      top: 0;
+      z-index: 9999;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand h1 {
+      font-size: 18px;
+      margin: 0;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+    }
+    .badge {
+      background: #2563eb;
+      color: white;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: bold;
+    }
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .selector-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .selector-group label {
+      font-size: 13px;
+      color: #9ca3af;
+    }
+    .selector-group select {
+      background: #1f2937;
+      color: #f3f4f6;
+      border: 1px solid #374151;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+    .user-pill {
+      background: #1f2937;
+      border: 1px solid #374151;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #d1d5db;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+    }
+    .btn-token {
+      background: #374151;
+      border: 1px solid #4b5563;
+      color: #f9fafb;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-token:hover {
+      background: #4b5563;
+    }
+    /* Modal styles */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-card {
+      background: white;
+      width: 580px;
+      max-width: 90vw;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    }
+    .modal-card h2 {
+      margin-top: 0;
+      font-size: 18px;
+      color: #111827;
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #4b5563;
+      margin-bottom: 4px;
+    }
+    .form-group input, .form-group textarea {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 12px;
+      font-family: monospace;
+      box-sizing: border-box;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .btn-save {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn-close {
+      background: #e5e7eb;
+      color: #374151;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    /* Swagger UI custom overrides */
+    .swagger-ui .topbar {
+      display: none;
+    }
+    .swagger-ui .info {
+      margin: 20px 0 10px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="custom-header">
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+      </svg>
+      <h1>POL ADV | Swagger Explorer</h1>
+      <span class="badge">OpenAPI 3.0</span>
+    </div>
+
+    <div class="header-controls">
+      <div class="selector-group">
+        <label for="spec-select">Recurso:</label>
+        <select id="spec-select" onchange="changeSpec(this.value)">
+          <option value="/swagger/lawoffice-service-api.json" selected>Lawoffice Core (Processos, Intimações, Tarefas, Financeiro)</option>
+          <option value="/swagger/polgateway-api.json">PolGateway (Conta, Sessão & Rotas)</option>
+          <option value="/swagger/polgateway-management-api.json">PolGateway Management (Actuator / Métricas)</option>
+        </select>
+      </div>
+
+      <div class="user-pill" title="Sessão autenticada ativa">
+        <span class="status-dot"></span>
+        <span>Sérgio Baião (Escritório: 25324)</span>
+      </div>
+
+      <button class="btn-token" onclick="openTokenModal()">🔑 Credenciais & Token</button>
+    </div>
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <!-- Modal de Credenciais -->
+  <div id="token-modal" class="modal-overlay">
+    <div class="modal-card">
+      <h2>Configurações de Autenticação da API</h2>
+      <p style="font-size: 12px; color: #6b7280; margin-bottom: 16px;">
+        Os cabeçalhos abaixo são automaticamente injetados nas requisições do Swagger UI e no Proxy local.
+      </p>
+
+      <div class="form-group">
+        <label for="cfg-token">Bearer Token (JWT):</label>
+        <textarea id="cfg-token" rows="4"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="cfg-office">X-OfficeId (Tenant ID):</label>
+        <input type="text" id="cfg-office" />
+      </div>
+
+      <div class="form-group">
+        <label for="cfg-userid">X-SelectedUserId (UUID do Usuário):</label>
+        <input type="text" id="cfg-userid" />
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-close" onclick="closeTokenModal()">Cancelar</button>
+        <button class="btn-save" onclick="saveCredentials()">Salvar Alterações</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.18.2/swagger-ui-bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.18.2/swagger-ui-standalone-preset.js"></script>
+  <script>
+    const DEFAULT_TOKEN = "";  // informe o JWT na interface (fica no localStorage)
+    const DEFAULT_OFFICE_ID = "25324";
+    const DEFAULT_USER_ID = "46e0695a-490e-49f4-b660-d19af55d956d";
+
+    let currentToken = localStorage.getItem("pol_jwt") || DEFAULT_TOKEN;
+    let currentOfficeId = localStorage.getItem("pol_office_id") || DEFAULT_OFFICE_ID;
+    let currentUserId = localStorage.getItem("pol_user_id") || DEFAULT_USER_ID;
+
+    let ui;
+
+    function initSwagger(specUrl) {
+      ui = SwaggerUIBundle({
+        url: specUrl,
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout",
+        displayRequestDuration: true,
+        docExpansion: "none",
+        filter: true,
+        showExtensions: true,
+        showCommonExtensions: true,
+        requestInterceptor: (req) => {
+          // Prepend relative proxy path if it targets remote directly
+          if (req.url.startsWith("https://office-api.pol.adv.br")) {
+            req.url = req.url.replace("https://office-api.pol.adv.br", window.location.origin);
+          }
+          // Attach default headers
+          req.headers["Authorization"] = "Bearer " + currentToken;
+          req.headers["x-officeid"] = currentOfficeId;
+          req.headers["x-selecteduserid"] = currentUserId;
+          req.headers["Accept"] = "application/json";
+          return req;
+        }
+      });
+    }
+
+    function changeSpec(url) {
+      initSwagger(url);
+    }
+
+    function openTokenModal() {
+      document.getElementById("cfg-token").value = currentToken;
+      document.getElementById("cfg-office").value = currentOfficeId;
+      document.getElementById("cfg-userid").value = currentUserId;
+      document.getElementById("token-modal").style.display = "flex";
+    }
+
+    function closeTokenModal() {
+      document.getElementById("token-modal").style.display = "none";
+    }
+
+    function saveCredentials() {
+      currentToken = document.getElementById("cfg-token").value.trim();
+      currentOfficeId = document.getElementById("cfg-office").value.trim();
+      currentUserId = document.getElementById("cfg-userid").value.trim();
+
+      localStorage.setItem("pol_jwt", currentToken);
+      localStorage.setItem("pol_office_id", currentOfficeId);
+      localStorage.setItem("pol_user_id", currentUserId);
+
+      closeTokenModal();
+      alert("Credenciais salvas com sucesso! As novas requisições utilizarão esses cabeçalhos.");
+    }
+
+    window.onload = function() {
+      initSwagger(document.getElementById("spec-select").value);
+    };
+  </script>
+</body>
+</html>

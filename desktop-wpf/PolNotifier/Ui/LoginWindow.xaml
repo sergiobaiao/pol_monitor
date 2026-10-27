@@ -1,0 +1,19 @@
+<Window x:Class="PolNotifier.Ui.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="POL ADV — Entrar" Width="400" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource Bg0}" Icon="/app.ico">
+    <Border Background="{StaticResource Bg1}" CornerRadius="12" Margin="20" Padding="28,24">
+        <StackPanel>
+            <TextBlock Text="⚖️ POL ADV" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/>
+            <TextBlock Text="Entre com sua conta do POL ADV" FontSize="12" Foreground="{StaticResource FgMuted}" HorizontalAlignment="Center" Margin="0,2,0,18"/>
+            <TextBlock Text="E-mail" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="TxtEmail"/>
+            <TextBlock Text="Senha" Style="{StaticResource FieldLabel}"/>
+            <PasswordBox x:Name="TxtPass"/>
+            <CheckBox x:Name="ChkRemember" Content="Lembrar usuário/senha" Margin="0,12,0,4"/>
+            <TextBlock x:Name="LblError" Foreground="#ef4444" FontSize="12" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6"/>
+            <Button x:Name="BtnLogin" Content="Entrar" Style="{StaticResource AccentButton}" Padding="0,10" FontSize="13" IsDefault="True" Click="OnLogin"/>
+        </StackPanel>
+    </Border>
+</Window>

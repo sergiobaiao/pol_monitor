@@ -1,0 +1,10 @@
+app/
+.agents/
+.spec-kit/
+swagger/
+*.bat
+download_specs.py
+server.py
+index.html
+requirements.txt
+README.md

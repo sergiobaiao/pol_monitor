@@ -1,0 +1,66 @@
+# Edição desktop (.NET 10 WPF): compila em todo push/PR; em tag vX.Y.Z publica o .exe e o instalador NSIS
+# como release do GitHub (marcada como latest).
+name: Desktop
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]  # filtros de paths não valem para tags
+    paths: ["desktop-wpf/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop-wpf/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Versão
+        shell: pwsh
+        run: |
+          $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "0.0.0-ci.${{ github.run_number }}" }
+          "VERSION=$v" >> $env:GITHUB_ENV
+
+      - name: NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+          }
+
+      - name: Publicar e gerar instalador
+        shell: pwsh
+        run: ./desktop-wpf/publish.ps1 -Version $env:VERSION
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PolNotifier-${{ env.VERSION }}
+          path: |
+            desktop-wpf/publish/PolNotifier.exe
+            desktop-wpf/publish/PolNotifier-Setup-*.exe
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = "desktop-wpf/publish"
+          # Nome fixo para o link .../releases/latest/download/PolNotifier-Setup.exe
+          Copy-Item "$dir/PolNotifier-Setup-$env:VERSION.exe" "$dir/PolNotifier-Setup.exe"
+          $files = "$dir/PolNotifier-Setup-$env:VERSION.exe", "$dir/PolNotifier-Setup.exe", "$dir/PolNotifier.exe"
+          gh release view "${{ github.ref_name }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "${{ github.ref_name }}" @files --clobber
+          } else {
+            gh release create "${{ github.ref_name }}" @files --title "POL ADV Notifier ${{ github.ref_name }}" --generate-notes --latest
+          }

@@ -1,0 +1,37 @@
+# Edição web (Cloudflare Python Worker): publica no Worker a cada push em main que mexa nela e em tags vX.Y.Z.
+# Segredos do repositório: CLOUDFLARE_API_TOKEN (permissão "Edit Cloudflare Workers") e CLOUDFLARE_ACCOUNT_ID.
+name: Web
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["app-web.py", "wrangler.toml", ".wranglerignore", ".github/workflows/web.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: web-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checar sintaxe
+        run: python3 -m py_compile app-web.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy no Cloudflare Workers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Segredo CLOUDFLARE_API_TOKEN não configurado no repositório"; exit 1
+          fi
+          npx --yes wrangler@4 deploy --message "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"
