@@ -34,7 +34,7 @@ jobs:
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "::error::Segredo CLOUDFLARE_API_TOKEN não configurado no repositório"; exit 1
           fi
-          # Segredo colado com CRLF no fim (ex.: pipe do PowerShell 5.1 para o gh) quebra o wrangler
+          # Segredo colado via pipe do PowerShell vem com CRLF/BOM invisíveis, que quebram o wrangler
           export CLOUDFLARE_API_TOKEN="$(printf %s "$CLOUDFLARE_API_TOKEN" | tr -d '\r\n\t ')"
           export CLOUDFLARE_ACCOUNT_ID="$(printf %s "$CLOUDFLARE_ACCOUNT_ID" | tr -d '\r\n\t ')"
           npx --yes wrangler@4 deploy --message "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"
