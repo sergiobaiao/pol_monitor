@@ -48,7 +48,23 @@
 - [x] **T-8.3:** "Lembrar usuário/senha" via Windows Credential Manager (`keyring`).
 - [x] **T-8.4:** Login na web (`/api/login`, cookie de sessão), estado por usuário em `data/web_store.json` / KV `POL_STORE`, cron iterando usuários lembrados.
 - [x] **T-8.5:** Remover o JWT de bootstrap hardcoded de `app/main.py`, `app-web.py` e `server.py` (agora `POL_TOKEN` opcional).
-- [ ] **T-8.6:** Criar o KV `POL_STORE` no Cloudflare e descomentar o binding em `wrangler.toml`.
+- [x] **T-8.6:** KV `POL_STORE` declarado em `wrangler.toml` sem `id` (provisionamento automático do wrangler no deploy).
 - [x] **T-8.7:** Worker funcional: HTTP via `fetch` do Workers (async), `WorkerEntrypoint`, monitor 24h por usuário com intervalo e deduplicação diária (cron `*/5` + thread local).
 - [x] **T-8.8:** E-mail na web via Gmail API (OAuth por usuário, instruções na aba Notificações), incluído no monitor 24h e no teste de canal.
 - [ ] **T-8.9:** Teste real do Gmail OAuth com um cliente criado pelo usuário.
+
+## Fase 9: Reescrita do Desktop em .NET 10 + WPF (`desktop-wpf/`)
+- [x] **T-9.1:** Projeto `desktop-wpf/PolNotifier` (login Keycloak, Credential Manager no formato do keyring, SQLite por usuário no mesmo esquema, agendador, notificadores E-mail/Telegram/OpenWA, painel, bandeja, instância única). Substitui `app/`, que fica só como referência.
+- [x] **T-9.2:** Widget estilo Fences com owner = `Progman` + `HWND_BOTTOM` (sem `SetParent`), validado com Win + D duas vezes.
+- [x] **T-9.3:** Classificação no horário local (a API manda UTC) e prazos "fim do dia" só com a data.
+- [x] **T-9.4:** Novo layout do e-mail (título/assunto `Publicações Online - Relatório de Tarefas Diário…`, seção "Hoje" primeiro, `URGENTE:`), gradiente de urgência verde → vermelho no e-mail/widget/painel e emojis no Telegram/WhatsApp.
+- [x] **T-9.5:** Botão "Enviar último relatório" (desktop e web, `POST /api/send-report`); botões "Testar" salvam os campos antes.
+- [x] **T-9.6:** Início automático com o Windows (Configurações + instalador).
+- [ ] **T-9.7:** Tarefas em Lista/Kanban e Calendário em Mês/Lista como no POL (desktop e web).
+- [ ] **T-9.8:** Web: envio de e-mail também por senha de app do Google (SMTP), além do OAuth.
+
+## Fase 10: Repositório, CI/CD e Releases
+- [x] **T-10.1:** Repositório https://github.com/sergiobaiao/pol_monitor; JWT removido do código; `.gitignore` (dados, `.env`, binários, `swagger/*.json`).
+- [x] **T-10.2:** `build.ps1`, `publish.ps1`, `release.ps1` (próxima tag vX.Y.Z automática) e instalador NSIS (atalho na Área de Trabalho, pasta no Menu Iniciar, início com o Windows).
+- [x] **T-10.3:** Workflows `desktop.yml` (build + release com instalador) e `web.yml` (deploy do Worker com `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`).
+
