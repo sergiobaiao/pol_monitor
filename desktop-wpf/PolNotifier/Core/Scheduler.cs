@@ -11,6 +11,8 @@ public sealed class Scheduler(Config config, PolClient pol)
     volatile bool _running;
 
     public ClassifiedItems? LastClassified { get; private set; }
+    /// <summary>Todas as tarefas (inclusive concluídas) e compromissos, para o Kanban e o calendário.</summary>
+    public List<BoardItem>? LastBoard { get; private set; }
     public DateTime? LastSync { get; private set; }
     public event Action<ClassifiedItems>? SyncCompleted;
     public event Action<string>? StatusChanged;
@@ -62,6 +64,7 @@ public sealed class Scheduler(Config config, PolClient pol)
             var events = await pol.GetEvents();
             var c = Formatter.Classify(tasks, events);
             LastClassified = c;
+            LastBoard = Board.Build(tasks, events);
             LastSync = DateTime.Now;
 
             if (c.HasItems) await SendReport(c, force);

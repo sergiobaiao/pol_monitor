@@ -71,7 +71,9 @@
                 </Grid>
 
                 <!-- TAREFAS -->
-                <DockPanel x:Name="ViewTasks" Visibility="Collapsed">
+                <TabControl x:Name="ViewTasks" Visibility="Collapsed" Background="Transparent" BorderThickness="0">
+                <TabItem Header="Lista">
+                <DockPanel Margin="0,10,0,0">
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
                         <TextBox x:Name="TxtSearch" Width="300" Margin="0,0,10,0" TextChanged="OnFilterChanged" ToolTip="Pesquisar em tarefas ou processos"/>
                         <ComboBox x:Name="CmbFilter" Width="170" SelectedIndex="0" SelectionChanged="OnFilterChanged">
@@ -86,11 +88,53 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel x:Name="TasksList"/></ScrollViewer>
                     </Border>
                 </DockPanel>
+                </TabItem>
+                <!-- Kanban como no POL (office.pol.adv.br/tasks) -->
+                <TabItem Header="Kanban">
+                    <DockPanel Margin="0,10,0,0">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <RadioButton x:Name="KbAll" Content="Todos" GroupName="kb" IsChecked="True" Margin="0,0,12,0" Checked="OnKanbanFilter"/>
+                                <RadioButton Content="Atrasadas" Tag="late" GroupName="kb" Margin="0,0,12,0" Checked="OnKanbanFilter"/>
+                                <RadioButton Content="Sem prazo" Tag="none" GroupName="kb" Checked="OnKanbanFilter"/>
+                            </StackPanel>
+                            <TextBox x:Name="TxtKanbanSearch" Width="320" HorizontalAlignment="Left" TextChanged="OnKanbanSearch" ToolTip="Pesquisar no quadro"/>
+                        </DockPanel>
+                        <Grid x:Name="Kanban">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                        </Grid>
+                    </DockPanel>
+                </TabItem>
+                </TabControl>
 
                 <!-- CALENDÁRIO -->
-                <Border x:Name="ViewCalendar" Visibility="Collapsed" Background="{StaticResource Bg1}" CornerRadius="10" Padding="8">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel x:Name="CalendarList"/></ScrollViewer>
-                </Border>
+                <TabControl x:Name="ViewCalendar" Visibility="Collapsed" Background="Transparent" BorderThickness="0">
+                    <!-- Visão mensal como no POL (office.pol.adv.br/calendar) -->
+                    <TabItem Header="Mês">
+                        <DockPanel Margin="0,10,0,0">
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                                <Button DockPanel.Dock="Left" Content="‹" Style="{StaticResource IconButton}" FontSize="20" Click="OnPrevMonth" ToolTip="Mês anterior"/>
+                                <TextBlock x:Name="LblMonth" DockPanel.Dock="Left" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource Fg}" VerticalAlignment="Center" Margin="6,0" MinWidth="230"/>
+                                <Button DockPanel.Dock="Left" Content="›" Style="{StaticResource IconButton}" FontSize="20" Click="OnNextMonth" ToolTip="Próximo mês"/>
+                                <Button DockPanel.Dock="Left" Content="Hoje" Style="{StaticResource FlatButton}" Background="#27272a" Margin="10,0,0,0" Click="OnThisMonth"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <Border Background="#1c64b5" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Pendente" Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,0,12,0"/>
+                                    <Border Background="#9b1c1c" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Atrasada" Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,0,12,0"/>
+                                    <Border Background="#2f9e44" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Concluída" Foreground="{StaticResource FgMuted}" FontSize="11"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <UniformGrid x:Name="WeekHeader" DockPanel.Dock="Top" Columns="7"/>
+                            <UniformGrid x:Name="MonthGrid" Columns="7" Rows="6"/>
+                        </DockPanel>
+                    </TabItem>
+                    <TabItem Header="Lista">
+                        <Border Background="{StaticResource Bg1}" CornerRadius="10" Padding="8" Margin="0,10,0,0">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel x:Name="CalendarList"/></ScrollViewer>
+                        </Border>
+                    </TabItem>
+                </TabControl>
 
                 <!-- NOTIFICAÇÕES -->
                 <ScrollViewer x:Name="ViewNotifications" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">

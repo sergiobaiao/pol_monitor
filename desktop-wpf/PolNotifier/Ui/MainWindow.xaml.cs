@@ -135,15 +135,19 @@ public partial class MainWindow : Window
         var tasks = items.Where(i => i.Type == "TASK").Select(i => Parse(i.RawJson)).ToList();
         var events = items.Where(i => i.Type == "EVENT").Select(i => Parse(i.RawJson)).ToList();
         if (tasks.Count + events.Count == 0) return null;
-        UpdateData(Formatter.Classify(tasks, events));
+        UpdateData(Formatter.Classify(tasks, events), Board.Build(tasks, events));
         return _data;
     }
 
     ClassifiedItems? _data;
+    List<BoardItem> _board = [];
 
-    public void UpdateData(ClassifiedItems c)
+    public void UpdateData(ClassifiedItems c, List<BoardItem>? board = null)
     {
         _data = c;
+        if (board != null) _board = board;
+        RenderKanban();
+        RenderMonth();
         _mToday.Text = c.Today.Count.ToString();
         _mTomorrow.Text = c.Tomorrow.Count.ToString();
         _mWeek.Text = c.ThisWeek.Count.ToString();
@@ -226,6 +230,170 @@ public partial class MainWindow : Window
             if (it.Description != "") sp.Children.Add(T(Short(it.Description), 11, "#9ca3af", wrap: true));
             return (UIElement)Box(sp, 4);
         }), "Nenhuma tarefa corresponde aos filtros selecionados.");
+    }
+
+    // --- Kanban (como office.pol.adv.br/tasks) ---
+    string _kanbanFilter = "";
+
+    void OnKanbanFilter(object sender, RoutedEventArgs e)
+    {
+        _kanbanFilter = (sender as FrameworkElement)?.Tag as string ?? "";
+        RenderKanban();
+    }
+
+    void OnKanbanSearch(object sender, TextChangedEventArgs e) => RenderKanban();
+
+    void RenderKanban()
+    {
+        if (Kanban == null) return;
+        Kanban.Children.Clear();
+        var q = TxtKanbanSearch.Text.Trim();
+        var tasks = _board.Where(b => b.IsTask)
+            .Where(b => _kanbanFilter switch { "late" => b.IsOverdue, "none" => b.NoDeadline, _ => true })
+            .Where(b => q == "" || b.Title.Contains(q, StringComparison.OrdinalIgnoreCase) || b.Description.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        for (int i = 0; i < Board.Columns.Length; i++)
+        {
+            var (status, title) = Board.Columns[i];
+            var col = tasks.Where(t => t.Status == status);
+            // Mesma ordem do POL: campo `score` crescente (o mais negativo = mais urgente primeiro)
+            col = col.OrderBy(t => t.Score).ThenBy(t => t.Deadline ?? DateTime.MaxValue);
+            var cards = new StackPanel();
+            foreach (var t in col) cards.Children.Add(KanbanCard(t));
+
+            var head = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 0, 0, 8) };
+            head.Children.Add(T(title, 13, "#e4e4e7", true));
+            head.Children.Add(new Border
+            {
+                Background = (Brush)FindResource("AccentBrush"), CornerRadius = new CornerRadius(9), Padding = new Thickness(6, 0, 6, 1),
+                Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Child = T(cards.Children.Count.ToString(), 11, "#ffffff", true),
+            });
+            var dock = new DockPanel { Margin = new Thickness(i == 0 ? 0 : 6, 0, i == 3 ? 0 : 6, 0) };
+            DockPanel.SetDock(head, Dock.Top);
+            dock.Children.Add(head);
+            dock.Children.Add(new Border
+            {
+                Background = Theme.Brush("#18181b"), CornerRadius = new CornerRadius(10), Padding = new Thickness(6),
+                Child = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = cards },
+            });
+            Grid.SetColumn(dock, i);
+            Kanban.Children.Add(dock);
+        }
+    }
+
+    UIElement KanbanCard(BoardItem t)
+    {
+        var sp = new StackPanel();
+        sp.Children.Add(T(t.Title, 12.5, "#f4f4f5", true, wrap: true));
+        if (t.Description != "")
+            sp.Children.Add(new TextBlock
+            {
+                Text = Short(t.Description), FontSize = 11, Foreground = Theme.Brush("#a1a1aa"), TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 30, Margin = new Thickness(0, 4, 0, 0),
+            });
+
+        var badges = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        if (Board.Priorities.TryGetValue(t.Priority, out var pr))
+            badges.Children.Add(new Border
+            {
+                Background = Theme.Brush("#27272a"), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 1, 6, 2), Margin = new Thickness(0, 0, 6, 0),
+                Child = T($"{pr.Arrow} {pr.Label}", 11, pr.Color, true),
+            });
+        if (t.Category != "")
+            badges.Children.Add(new Border
+            {
+                BorderBrush = Theme.Brush(t.CategoryColor), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 0, 6, 1), Child = T(t.Category, 11, t.CategoryColor),
+            });
+        sp.Children.Add(badges);
+
+        var footer = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+        var date = t.Deadline is { } d ? d.ToString("dd/MM/yyyy - HH:mm") : "Sem prazo";
+        var dateTb = T(t.IsOverdue ? $"⚠ {date}" : $"📅 {date}", 11, t.IsOverdue ? "#f87171" : "#a1a1aa", t.IsOverdue);
+        DockPanel.SetDock(dateTb, Dock.Right);
+        footer.Children.Add(dateTb);
+        if (t.Initials != "")
+            footer.Children.Add(new Border
+            {
+                Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = Theme.Brush("#3f3f46"), HorizontalAlignment = HorizontalAlignment.Left,
+                ToolTip = t.Assignee, Child = new TextBlock { Text = t.Initials, FontSize = 10, FontWeight = FontWeights.Bold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            });
+        sp.Children.Add(footer);
+
+        // Atrasada fica com fundo avermelhado, como no POL
+        return new Border
+        {
+            Background = Theme.Brush(t.IsOverdue ? "#3b1d1f" : "#232327"), BorderBrush = Theme.Brush(t.IsOverdue ? "#7f1d1d" : "#2f2f35"),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 10), Margin = new Thickness(0, 0, 0, 8), Child = sp,
+        };
+    }
+
+    // --- Calendário mensal (como office.pol.adv.br/calendar) ---
+    DateTime _month = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    static readonly CultureInfo PtBr = CultureInfo.GetCultureInfo("pt-BR");
+
+    void OnPrevMonth(object sender, RoutedEventArgs e) { _month = _month.AddMonths(-1); RenderMonth(); }
+    void OnNextMonth(object sender, RoutedEventArgs e) { _month = _month.AddMonths(1); RenderMonth(); }
+    void OnThisMonth(object sender, RoutedEventArgs e) { _month = new(DateTime.Today.Year, DateTime.Today.Month, 1); RenderMonth(); }
+
+    void RenderMonth()
+    {
+        if (MonthGrid == null) return;
+        LblMonth.Text = _month.ToString("MMMM 'de' yyyy", PtBr).ToUpper(PtBr);
+        if (WeekHeader.Children.Count == 0)
+            foreach (var d in new[] { "Dom.", "Seg.", "Ter.", "Qua.", "Qui.", "Sex.", "Sáb." })
+                WeekHeader.Children.Add(new TextBlock { Text = d, FontSize = 12, Foreground = Theme.Brush("#a1a1aa"), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 6) });
+
+        MonthGrid.Children.Clear();
+        var start = _month.AddDays(-(int)_month.DayOfWeek); // a grade começa no domingo
+        var byDay = _board.Where(b => b.Deadline != null).GroupBy(b => b.Deadline!.Value.Date).ToDictionary(g => g.Key, g => g.OrderBy(b => b.Deadline).ToList());
+        for (int i = 0; i < 42; i++)
+        {
+            var day = start.AddDays(i);
+            var inMonth = day.Month == _month.Month;
+            var isToday = day == DateTime.Today;
+            var cell = new StackPanel();
+
+            var num = new TextBlock { Text = day.Day.ToString(), FontSize = 12, FontWeight = isToday ? FontWeights.Bold : FontWeights.Normal,
+                                      Foreground = isToday ? Brushes.White : Theme.Brush(inMonth ? "#d4d4d8" : "#52525b"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            cell.Children.Add(new Border
+            {
+                Width = 24, Height = 24, CornerRadius = new CornerRadius(12), HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 2, 2, 2),
+                Background = isToday ? (Brush)FindResource("AccentBrush") : Brushes.Transparent, Child = num,
+            });
+
+            if (byDay.TryGetValue(day, out var items))
+            {
+                const int max = 3;
+                foreach (var b in items.Take(max)) cell.Children.Add(MonthEntry(b, inMonth));
+                if (items.Count > max)
+                    cell.Children.Add(new TextBlock { Text = $"+{items.Count - max} mais", FontSize = 10.5, Foreground = Theme.Brush("#a1a1aa"), Margin = new Thickness(4, 1, 0, 0),
+                                                      ToolTip = string.Join(Environment.NewLine, items.Skip(max).Select(x => x.Title)) });
+            }
+
+            MonthGrid.Children.Add(new Border
+            {
+                BorderBrush = Theme.Brush("#27272a"), BorderThickness = new Thickness(0.5),
+                Background = Theme.Brush(isToday ? "#172033" : inMonth ? "#18181b" : "#121214"), Child = cell, ClipToBounds = true,
+            });
+        }
+    }
+
+    static UIElement MonthEntry(BoardItem b, bool inMonth)
+    {
+        var tb = new TextBlock
+        {
+            Text = (b.IsTask ? "" : "📅 ") + b.Title, FontSize = 10.5, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis,
+            TextDecorations = b.IsDone ? TextDecorations.Strikethrough : null,
+        };
+        var when = b.Deadline!.Value.ToString(b.IsTask ? "dd/MM/yyyy" : "dd/MM/yyyy HH:mm");
+        var state = b.IsTask ? (b.IsDone ? "Concluída" : b.IsOverdue ? "Atrasada" : "Pendente") : "Compromisso";
+        var tip = $"{b.Title}{Environment.NewLine}{state} · {when}" + (b.Description != "" ? $"{Environment.NewLine}{Environment.NewLine}{Short(b.Description)}" : "");
+        return new Border
+        {
+            Background = Theme.Brush(b.CalendarColor), CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(3, 0, 3, 2),
+            Opacity = inMonth ? 1 : 0.55, Child = tb, ToolTip = tip,
+        };
     }
 
     void RefreshLogs()

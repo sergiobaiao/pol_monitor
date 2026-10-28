@@ -117,7 +117,7 @@ public partial class App : Application
             _scheduler.SyncCompleted += c => ui.BeginInvoke(() =>
             {
                 _fence.UpdateData(c);
-                _main.UpdateData(c);
+                _main.UpdateData(c, _scheduler.LastBoard);
             });
             _scheduler.StatusChanged += s => ui.BeginInvoke(() => _main.SetStatus(s.StartsWith("Erro") ? $"🔴 {s}" : $"🟢 {s}",
                 s.StartsWith("Erro") ? "#ef4444" : "#10b981"));
