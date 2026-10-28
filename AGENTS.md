@@ -15,7 +15,7 @@ O **POL ADV Notifier** é um ecossistema completo para monitoramento automatizad
 O projeto é composto por:
 1. **Desktop App (Windows) — `desktop-wpf/`, .NET 10 + WPF**: tema escuro Fluent, bandeja (`NotifyIcon`), agendador em background, notificações multicanal (E-mail, Telegram, WhatsApp), painel com Kanban e calendário mensal como no POL e **Widget de Área de Trabalho estilo Stardock Fences**. Substitui a versão Python (`app/`), mantida só como referência.
 2. **Swagger UI & Proxy Local**: Servidor local em `http://127.0.0.1:8000` (`server.py`) com especificações OpenAPI 3.0 consolidadas das 476 rotas da API do POL ADV e proxy CORS reverso.
-3. **Web Edition & Cloudflare Workers**: Aplicação web (`app-web.py`) com SPA embutida, execução local ou Python Worker (Pyodide) em `https://pol-adv-web.victorlimapge.workers.dev`, com persistência no KV `POL_STORE` e e-mail por OAuth (Gmail API) **ou** senha de app do Google (SMTP, porta 465 no Worker). Independente do desktop: regra de negócio corrigida num lado deve ser replicada no outro.
+3. **Web Edition & Cloudflare Workers**: Aplicação web (`app-web.py`) com SPA embutida, execução local ou Python Worker (Pyodide) em `https://pol-adv-web.victorlimapge.workers.dev`, com persistência no KV `POL_STORE` e e-mail por OAuth (Gmail API) **ou** senha de app do Google (SMTP; no Worker via RPC para o Worker JavaScript auxiliar `pol-adv-smtp`, em `smtp-worker/`, porque o Python Worker ainda não faz TLS em sockets). Independente do desktop: regra de negócio corrigida num lado deve ser replicada no outro.
 4. **CI/CD e releases** (`.github/workflows/`, `release.ps1`, instalador NSIS): ver seção 7.
 
 ---
@@ -118,7 +118,8 @@ Para alcançar o comportamento exato do **Stardock Fences** (imunidade a `Win + 
 ```
 z:\pol\
 │   app-web.py                     # Versão Web / Cloudflare Worker (Python / Pyodide)
-│   wrangler.toml                  # Deploy no Cloudflare Workers (cron */5, KV POL_STORE sem id = provisionamento automático)
+│   wrangler.toml                  # Deploy no Cloudflare Workers (cron */5, KV POL_STORE sem id = provisionamento automático, service binding SMTP)
+│   smtp-worker/                   # Worker JS auxiliar pol-adv-smtp: SMTP com TLS/STARTTLS por RPC (smtp.js, index.js, test.mjs)
 │   release.ps1                    # Cria e envia a próxima tag vX.Y.Z (dispara o CI)
 │   server.py / index.html         # Proxy CORS e Swagger UI (porta 8000)
 │   download_specs.py              # Baixa os OpenAPI do POL (precisa de POL_TOKEN no ambiente)
@@ -181,6 +182,6 @@ O deploy do Worker é feito pelo CI a cada push que toque `app-web.py`/`wrangler
 ## 7. CI/CD e Releases
 
 - **Desktop (`.github/workflows/desktop.yml`):** em push/PR que toque `desktop-wpf/**`, compila e roda `publish.ps1`; em tag `v*`, cria a release (*latest*) com `PolNotifier-Setup-X.Y.Z.exe`, `PolNotifier-Setup.exe` (nome fixo) e `PolNotifier.exe`. O instalador NSIS (`desktop-wpf/installer/PolNotifier.nsi`) é por usuário, sem administrador, com opções de atalho na Área de Trabalho, pasta no Menu Iniciar e início com o Windows.
-- **Web (`.github/workflows/web.yml`):** `py_compile` + `wrangler deploy` em push que toque `app-web.py`/`wrangler.toml` e em tags. Segredos: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+- **Web (`.github/workflows/web.yml`):** `py_compile`, `node smtp-worker/test.mjs`, `wrangler deploy` do Worker auxiliar `pol-adv-smtp` e depois do principal (ordem importa: service binding), em push que toque `app-web.py`/`wrangler.toml`/`smtp-worker/**` e em tags. Segredos: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 - **Versão:** `release.ps1` incrementa a última tag `vX.Y.Z` (patch por padrão) e envia; o CI faz o resto. Limite da API do GitHub: 5.000 requisições/h.
-
+12. **SMTP no Worker Python:** `asyncio.open_connection(..., ssl=True)` falha com "SSL/TLS via create_connection is not yet supported" (a porta 465 exige TLS). Solução: Worker JavaScript `pol-adv-smtp` (`cloudflare:sockets` com `secureTransport`) chamado por RPC pelo Python Worker (service binding `SMTP`, `to_js` + `dict_converter=Object.fromEntries`). `workers_dev = false` nele: só acessível por binding.

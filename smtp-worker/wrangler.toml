@@ -1,0 +1,7 @@
+name = "pol-adv-smtp"
+main = "index.js"
+compatibility_date = "2026-10-01"
+
+# Só existe para ser chamado por service binding (RPC) pelo Worker pol-adv-web: sem URL pública
+workers_dev = false
+preview_urls = false

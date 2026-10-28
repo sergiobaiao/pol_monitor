@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["app-web.py", "wrangler.toml", ".wranglerignore", ".github/workflows/web.yml"]
+    paths: ["app-web.py", "wrangler.toml", ".wranglerignore", "smtp-worker/**", ".github/workflows/web.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -26,6 +26,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Testar o cliente SMTP do Worker auxiliar
+        run: node smtp-worker/test.mjs
+
       - name: Deploy no Cloudflare Workers
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -38,4 +41,6 @@ jobs:
           export CLOUDFLARE_API_TOKEN="$(printf %s "$CLOUDFLARE_API_TOKEN" | LC_ALL=C tr -cd 'A-Za-z0-9_-')"
           export CLOUDFLARE_ACCOUNT_ID="$(printf %s "$CLOUDFLARE_ACCOUNT_ID" | LC_ALL=C tr -cd 'A-Za-z0-9_-')"
           echo "account id: ${#CLOUDFLARE_ACCOUNT_ID} caracteres válidos"
+          # O Worker auxiliar (SMTP com TLS) vai primeiro: o principal o referencia por service binding
+          npx --yes wrangler@4 deploy -c smtp-worker/wrangler.toml
           npx --yes wrangler@4 deploy --message "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"

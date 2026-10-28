@@ -8,7 +8,7 @@ Guia para o Gemini CLI neste repositório. Contexto detalhado (APIs, estrutura, 
 
 ## Componentes
 - **`desktop-wpf/`** — desktop **.NET 10 + WPF** (edição ativa; substitui `app/`): login no Keycloak com senha no Credential Manager (formato do `keyring`), SQLite por usuário em `data/users/<sub>.db`, agendador, widget estilo Fences, painel (Início, Tarefas Lista/Kanban, Calendário Mês/Lista com popup de detalhes ao clicar, Notificações, Configurações, Logs), bandeja, instalador NSIS.
-- **`app-web.py`** — web autocontida (SPA embutida) e Python Worker no Cloudflare; persistência no KV `POL_STORE`; e-mail por OAuth (Gmail API) ou senha de app do Google (SMTP; no Worker só a porta 465, via cliente asyncio sobre `connect()`). **Não importa nada do desktop**: regra de negócio corrigida num lado deve ser replicada no outro.
+- **`app-web.py`** — web autocontida (SPA embutida) e Python Worker no Cloudflare; persistência no KV `POL_STORE`; e-mail por OAuth (Gmail API) ou senha de app do Google (SMTP). O Python Worker não faz TLS em sockets, então o SMTP passa por RPC (service binding `SMTP`) para o Worker JavaScript `pol-adv-smtp` em `smtp-worker/` (testar com `node smtp-worker/test.mjs`). **Não importa nada do desktop**: regra de negócio corrigida num lado deve ser replicada no outro.
 - **`server.py` + `index.html` + `swagger/`** — Swagger UI e proxy CORS do POL.
 - **`app/`** — desktop antigo em Python/CustomTkinter, só referência. Não rodar junto com o .NET (duplica agendador e notificações).
 
@@ -34,5 +34,5 @@ Não há suíte de testes. O `nuget.config` de `desktop-wpf/` aponta para o nuge
 
 ## CI/CD (`.github/workflows/`)
 - `desktop.yml` (windows): build + `publish.ps1` em mudanças de `desktop-wpf/**`; em tag `v*` cria a release *latest* com `PolNotifier-Setup-X.Y.Z.exe`, `PolNotifier-Setup.exe` e `PolNotifier.exe`.
-- `web.yml` (ubuntu): `py_compile` + `wrangler deploy` em mudanças de `app-web.py`/`wrangler.toml` e em tags. Segredos: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+- `web.yml` (ubuntu): `py_compile`, teste do `smtp-worker`, deploy do Worker auxiliar e depois do principal, em mudanças de `app-web.py`/`wrangler.toml`/`smtp-worker/**` e em tags. Segredos: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 - Instalador NSIS (`desktop-wpf/installer/PolNotifier.nsi`): por usuário, sem administrador; opções de atalho na Área de Trabalho, pasta no Menu Iniciar e início com o Windows. Limite da API do GitHub: 5.000 requisições/h.

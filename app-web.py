@@ -26,6 +26,8 @@ from email import policy as email_policy
 
 # Identificar se está rodando no ambiente Cloudflare Workers (Pyodide)
 IS_CLOUDFLARE = False
+# Bindings do Worker (preenchido em fetch/scheduled; o SMTP usa env.SMTP = Worker pol-adv-smtp)
+CF_ENV: Any = None
 try:
     from workers import WorkerEntrypoint, Response as CFResponse, fetch as cf_fetch
     IS_CLOUDFLARE = True
@@ -290,47 +292,17 @@ def smtp_data() -> Dict[str, Any]:
 class SmtpError(Exception):
     pass
 
-async def smtp_send_async(host: str, port: int, user: str, password: str, sender: str, rcpts: List[str], raw: bytes):
-    """Cliente SMTP mínimo sobre asyncio (smtplib é bloqueante e não serve no Pyodide). Só TLS direto (465):
-    no Worker o socket vem do connect() da Cloudflare e a porta 587/STARTTLS não é suportada aqui."""
-    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port, ssl=(port == 465)), 20)
-
-    async def read_reply() -> Tuple[int, str]:
-        lines = []
-        while True:
-            line = (await asyncio.wait_for(reader.readline(), 20)).decode("utf-8", "ignore").rstrip()
-            if not line:
-                raise SmtpError("conexão encerrada pelo servidor")
-            lines.append(line)
-            if len(line) < 4 or line[3] != "-":
-                return int(line[:3]), " ".join(lines)
-
-    async def cmd(text: Optional[str], ok: Tuple[int, ...]):
-        if text is not None:
-            writer.write(text.encode("utf-8") + b"\r\n")
-            await writer.drain()
-        code, reply = await read_reply()
-        if code not in ok:
-            raise SmtpError(f"{code} {reply}")
-
-    try:
-        await cmd(None, (220,))
-        await cmd("EHLO pol-adv-web", (250,))
-        await cmd("AUTH PLAIN " + base64.b64encode(f"\0{user}\0{password}".encode("utf-8")).decode("ascii"), (235,))
-        await cmd(f"MAIL FROM:<{sender}>", (250,))
-        for r in rcpts:
-            await cmd(f"RCPT TO:<{r}>", (250, 251))
-        await cmd("DATA", (354,))
-        body = re.sub(rb"(?m)^\.", b"..", raw.rstrip(b"\r\n"))  # dot-stuffing
-        writer.write(body + b"\r\n.\r\n")
-        await writer.drain()
-        await cmd(None, (250,))
-        try:
-            await cmd("QUIT", (221,))
-        except Exception:
-            pass
-    finally:
-        writer.close()
+async def smtp_send_rpc(host: str, port: int, user: str, password: str, rcpts: List[str], msg: EmailMessage):
+    """No Worker o Python ainda não faz TLS em sockets ("SSL/TLS via create_connection is not yet supported"):
+    o envio vai por RPC (service binding SMTP) para o Worker JavaScript `pol-adv-smtp` (smtp-worker/)."""
+    from js import Object
+    from pyodide.ffi import to_js
+    rpc = getattr(CF_ENV, "SMTP", None) if CF_ENV is not None else None
+    if rpc is None:
+        raise RuntimeError("binding SMTP (Worker pol-adv-smtp) não configurado")
+    raw = base64.b64encode(msg.as_bytes(policy=email_policy.SMTP)).decode("ascii")
+    await rpc.send(to_js({"host": host, "port": port, "user": user, "password": password, "from": user, "to": rcpts, "raw": raw},
+                         dict_converter=Object.fromEntries))
 
 def smtp_send_blocking(host: str, port: int, user: str, password: str, msg: EmailMessage, rcpts: List[str]):
     import smtplib
@@ -352,8 +324,6 @@ async def send_email_smtp(subject: str, html_body: str, text_body: str) -> Tuple
     user, password = sm.get("user", ""), sm.get("password", "")
     if not user or not password:
         return False, "E-mail: informe o e-mail e a senha de app do Google e salve."
-    if IS_CLOUDFLARE and port != 465:
-        return False, "E-mail: no Worker use a porta 465 (TLS direto); a 587/STARTTLS só funciona na versão local."
     raw = user_cfg().get("email_recipients", "")
     recipients = [r.strip() for r in raw.replace(";", ",").split(",") if r.strip()] or [user]
 
@@ -365,7 +335,7 @@ async def send_email_smtp(subject: str, html_body: str, text_body: str) -> Tuple
     msg.add_alternative(html_body, subtype="html")
     try:
         if IS_CLOUDFLARE:
-            await smtp_send_async(host, port, user, password, user, recipients, msg.as_bytes(policy=email_policy.SMTP))
+            await smtp_send_rpc(host, port, user, password, recipients, msg)
         else:
             await asyncio.to_thread(smtp_send_blocking, host, port, user, password, msg, recipients)
     except Exception as e:
@@ -828,7 +798,7 @@ INDEX_HTML = """<!DOCTYPE html>
                 <input type="text" id="smtp-host" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
               </div>
               <div>
-                <label class="text-xs text-zinc-400 font-semibold block mb-1">Porta (465 = TLS direto):</label>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">Porta (465 = TLS direto, 587 = STARTTLS):</label>
                 <input type="number" id="smtp-port" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
               </div>
             </div>
@@ -844,7 +814,7 @@ INDEX_HTML = """<!DOCTYPE html>
                 <li>Copie as 16 letras (os espaços são ignorados), cole em <b>Senha de app</b>, preencha seu e-mail e clique em <b>Salvar SMTP</b>.</li>
                 <li>Marque <b>Enviar o resumo também por e-mail</b>, <b>Salvar Configurações</b> e use <b>Testar E-mail</b>.</li>
               </ol>
-              <p class="mt-3 text-zinc-500">A senha fica salva só na sua conta deste app (nunca volta para o navegador) e dá acesso apenas ao envio por SMTP; para revogar, apague-a no link acima. Servidor Google: <code>smtp.gmail.com</code>, porta <code>465</code>. No Cloudflare só a porta 465 funciona.</p>
+              <p class="mt-3 text-zinc-500">A senha fica salva só na sua conta deste app (nunca volta para o navegador) e dá acesso apenas ao envio por SMTP; para revogar, apague-a no link acima. Servidor Google: <code>smtp.gmail.com</code>, porta <code>465</code> (recomendada) ou <code>587</code>.</p>
             </details>
           </div>
 
@@ -1565,6 +1535,8 @@ async def cf_save_store(env):
 # =============================================================================
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
+        global CF_ENV
+        CF_ENV = self.env
         url = urllib.parse.urlparse(request.url)
         method = request.method
         body = (await request.text()).encode("utf-8") if method in ["POST", "PUT"] else b""
@@ -1581,6 +1553,8 @@ class Default(WorkerEntrypoint):
 
     async def scheduled(self, controller, env, ctx):
         """Cron Trigger (a cada 5 min): monitor de todos os usuários lembrados."""
+        global CF_ENV
+        CF_ENV = self.env
         await cf_load_store(self.env)
         if await run_cron():
             await cf_save_store(self.env)

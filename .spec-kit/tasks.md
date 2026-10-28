@@ -61,7 +61,7 @@
 - [x] **T-9.5:** Botão "Enviar último relatório" (desktop e web, `POST /api/send-report`); botões "Testar" salvam os campos antes.
 - [x] **T-9.6:** Início automático com o Windows (Configurações + instalador).
 - [ ] **T-9.7:** Tarefas em Lista/Kanban e Calendário em Mês/Lista como no POL (desktop e web).
-- [x] **T-9.8:** Web: envio de e-mail também por senha de app do Google (SMTP, `/api/smtp`), além do OAuth. Cliente asyncio validado contra servidor SMTP falso; envio real pelo Worker a confirmar pelo usuário.
+- [x] **T-9.8:** Web: envio de e-mail também por senha de app do Google (SMTP, `/api/smtp`), além do OAuth. Teste real no Worker mostrou que o Python não faz TLS em sockets; envio feito pelo Worker JavaScript auxiliar `pol-adv-smtp` (RPC), cliente validado em Node contra servidor falso; envio real a confirmar pelo usuário.
 
 ## Fase 10: Repositório, CI/CD e Releases
 - [x] **T-10.1:** Repositório https://github.com/sergiobaiao/pol_monitor; JWT removido do código; `.gitignore` (dados, `.env`, binários, `swagger/*.json`).

@@ -8,3 +8,4 @@ server.py
 index.html
 requirements.txt
 README.md
+smtp-worker/

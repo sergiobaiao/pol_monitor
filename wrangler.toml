@@ -12,3 +12,10 @@ crons = ["*/5 * * * *"] # Monitor 24h: a cada 5 min; cada usuário respeita o pr
 # e passa a usá-lo nos seguintes (provisionamento automático).
 [[kv_namespaces]]
 binding = "POL_STORE"
+
+# Envio de e-mail por SMTP com TLS: Worker JavaScript `pol-adv-smtp` (smtp-worker/), chamado por RPC.
+# O Python Worker ainda não faz TLS em sockets. Precisa estar publicado antes deste (o web.yml faz nessa ordem).
+[[services]]
+binding = "SMTP"
+service = "pol-adv-smtp"
+entrypoint = "Smtp"
