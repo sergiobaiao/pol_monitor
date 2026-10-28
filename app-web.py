@@ -92,6 +92,18 @@ def save_store():
 def user_cfg() -> Dict[str, Any]:
     return STORE["users"][CTX["sub"]]["config"]
 
+def migrate_channel_flags(cfg: Dict[str, Any]) -> bool:
+    """Antes dos interruptores, Telegram/WhatsApp enviavam sempre que configurados: quem já tinha os dados
+    continua recebendo (liga o interruptor uma vez). Devolve True se mudou algo."""
+    if cfg.get("_flags_v1"):
+        return False
+    if cfg.get("telegram_token") and cfg.get("telegram_chat_ids"):
+        cfg["telegram_enabled"] = True
+    if cfg.get("openwa_url") and cfg.get("openwa_recipients"):
+        cfg["openwa_enabled"] = True
+    cfg["_flags_v1"] = True
+    return True
+
 def log(level: str, msg: str):
     entry = {
         "timestamp": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"),
@@ -839,6 +851,7 @@ INDEX_HTML = """<!DOCTYPE html>
         <div class="card-glass p-5 space-y-4">
           <div class="flex justify-between items-center border-b border-zinc-800 pb-3">
             <h3 class="font-bold text-base text-zinc-100 flex items-center gap-2">✈️ Notificações por Telegram</h3>
+            <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="cfg-tg-enabled"> Ativo</label>
             <button onclick="testChannel('telegram')" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-1.5 rounded-md text-zinc-300 font-medium">🧪 Testar Telegram</button>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -856,6 +869,7 @@ INDEX_HTML = """<!DOCTYPE html>
         <div class="card-glass p-5 space-y-4">
           <div class="flex justify-between items-center border-b border-zinc-800 pb-3">
             <h3 class="font-bold text-base text-zinc-100 flex items-center gap-2">💬 WhatsApp (OpenWA / WPPConnect)</h3>
+            <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="cfg-wa-enabled"> Ativo</label>
             <button onclick="testChannel('openwa')" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-1.5 rounded-md text-zinc-300 font-medium">🧪 Testar WhatsApp</button>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1420,6 +1434,8 @@ INDEX_HTML = """<!DOCTYPE html>
       document.getElementById('cfg-pol-office').value = cfg.pol_office_id || '';
       document.getElementById('cfg-pol-interval').value = cfg.check_interval_minutes || '60';
 
+      document.getElementById('cfg-tg-enabled').checked = !!cfg.telegram_enabled;
+      document.getElementById('cfg-wa-enabled').checked = !!cfg.openwa_enabled;
       document.getElementById('cfg-tg-token').value = cfg.telegram_token || '';
       document.getElementById('cfg-tg-chats').value = cfg.telegram_chat_ids || '';
       document.getElementById('cfg-wa-url').value = cfg.openwa_url || '';
@@ -1506,6 +1522,8 @@ INDEX_HTML = """<!DOCTYPE html>
       const payload = {
         pol_office_id: document.getElementById('cfg-pol-office').value,
         check_interval_minutes: parseInt(document.getElementById('cfg-pol-interval').value || '60'),
+        telegram_enabled: document.getElementById('cfg-tg-enabled').checked,
+        openwa_enabled: document.getElementById('cfg-wa-enabled').checked,
         telegram_token: document.getElementById('cfg-tg-token').value,
         telegram_chat_ids: document.getElementById('cfg-tg-chats').value,
         openwa_url: document.getElementById('cfg-wa-url').value,
@@ -1538,6 +1556,17 @@ INDEX_HTML = """<!DOCTYPE html>
     }
 
     async function testChannel(channel) {
+      if (channel === 'telegram' || channel === 'openwa') {
+        // Como no desktop: o teste usa o que está digitado, sem exigir "Salvar" antes
+        await fetch('/api/config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telegram_token: document.getElementById('cfg-tg-token').value, telegram_chat_ids: document.getElementById('cfg-tg-chats').value,
+            openwa_url: document.getElementById('cfg-wa-url').value, openwa_api_key: document.getElementById('cfg-wa-key').value,
+            openwa_recipients: document.getElementById('cfg-wa-recipients').value
+          })
+        });
+      }
       if (channel === 'email') {
         await fetch('/api/config', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1625,6 +1654,7 @@ async def resolve_session(cookie_header: str) -> Optional[str]:
             return None
         SESSIONS[key] = auth
     CTX["sub"], CTX["auth"] = auth["sub"], auth
+    migrate_channel_flags(user_cfg())
     return key
 
 async def do_login(body_bytes: bytes):
@@ -1997,9 +2027,13 @@ def format_openwa(c: Dict[str, Any]) -> str:
 async def send_report(classified: Dict[str, Any]) -> List[Tuple[str, bool, str]]:
     """Envia o resumo para todos os canais configurados do usuário em CTX (mesmas mensagens do desktop).
     Devolve (canal, ok, mensagem)."""
-    results = [("Telegram", *await send_telegram(format_telegram(classified))),
-               ("WhatsApp", *await send_openwa(format_openwa(classified)))]
-    if user_cfg().get("email_enabled"):
+    cfg = user_cfg()
+    results: List[Tuple[str, bool, str]] = []
+    if cfg.get("telegram_enabled"):
+        results.append(("Telegram", *await send_telegram(format_telegram(classified))))
+    if cfg.get("openwa_enabled"):
+        results.append(("WhatsApp", *await send_openwa(format_openwa(classified))))
+    if cfg.get("email_enabled"):
         plain = format_telegram(classified).replace("*", "").replace("`", "")
         results.append(("E-mail", *await send_email(email_subject(classified), email_html(classified, user_first_name()), plain)))
     return results
@@ -2016,6 +2050,7 @@ async def run_cron() -> bool:
         if not user.get("refresh_token") or now - user.get("last_check", 0) < interval - 30:
             continue
         changed = True
+        migrate_channel_flags(user["config"])
         user["last_check"] = now
         CTX["sub"], CTX["auth"] = sub, {"sub": sub, "refresh_token": user["refresh_token"], "expiry": 0}
         if not await pol_authenticate():
