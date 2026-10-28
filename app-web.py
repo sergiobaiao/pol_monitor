@@ -1854,7 +1854,7 @@ def urgency_emoji(days: Optional[int]) -> str:
     """Telegram/WhatsApp não têm cor de texto: o gradiente verde → vermelho vira um marcador por item."""
     if days is None:
         return "⚪"
-    return "⛔" if days < 0 else "🔴" if days == 0 else "🟠" if days <= 2 else "🟡" if days <= 5 else "🟢"
+    return "🔴" if days <= 0 else "🟠" if days <= 2 else "🟡" if days <= 5 else "🟢"
 
 PT_WEEKDAYS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]  # segunda = 0
 

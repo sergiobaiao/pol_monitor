@@ -63,7 +63,7 @@ Projeto `desktop-wpf/PolNotifier` (net10.0-windows, WPF + WinForms só pelo `Not
 
 Comportamentos que não são óbvios:
 - **E-mail:** título e assunto `Publicações Online - Relatório de Tarefas Diário para dd/MM/yyyy`; com prazo vencendo hoje o assunto ganha `URGENTE:` e o corpo uma faixa vermelha. Saudação `"<primeiro nome>, estas são suas tarefas e agenda para os próximos dias."`; a seção "Hoje" vem sempre primeiro (vazia = "Nenhuma tarefa/agendamento para hoje."). Tabelas e estilos inline (Gmail/Outlook ignoram `<style>`/flex). Títulos e datas coloridos pelo gradiente de urgência; no e-mail a luminosidade é reduzida até contraste ≥ 4,5:1 sobre branco.
-- **Telegram/WhatsApp** não têm cor de texto: o gradiente vira um emoji por item (⛔ atrasado, 🔴 hoje, 🟠 ≤2 dias, 🟡 ≤5, 🟢 mais longe, ⚪ sem prazo).
+- **Telegram/WhatsApp** não têm cor de texto: o gradiente vira um emoji por item (🔴 atrasado ou hoje, 🟠 ≤2 dias, 🟡 ≤5, 🟢 mais longe, ⚪ sem prazo).
 - **Prazos de "fim do dia"** (23:59 local) são exibidos só com a data; eventos com hora real mostram a hora.
 - **Botões "Testar"** (e-mail/Telegram/WhatsApp) salvam os campos digitados antes de enviar. **"Enviar último relatório"** (Configurações) reenvia para os canais ativos ignorando a deduplicação.
 - **Início com o Windows:** checkbox em Configurações → Inicialização; mesmo valor `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\POL ADV Notifier` que o instalador grava.

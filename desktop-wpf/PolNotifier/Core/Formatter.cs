@@ -130,7 +130,7 @@ public static class Formatter
     {
         if (it.Deadline is not { } d) return "⚪";
         var days = (d.Date - DateTime.Today).TotalDays;
-        return days < 0 ? "⛔" : days == 0 ? "🔴" : days <= 2 ? "🟠" : days <= 5 ? "🟡" : "🟢";
+        return days <= 0 ? "🔴" : days <= 2 ? "🟠" : days <= 5 ? "🟡" : "🟢";
     }
 
     public static string UrgencyColor(Item it, bool dark = false) =>
