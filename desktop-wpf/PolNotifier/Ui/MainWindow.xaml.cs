@@ -44,10 +44,10 @@ public partial class MainWindow : Window
         LblConnected.Text = $"Conectado como {config.PolEmail}";
         LblAccent.Text = $"Cor do Windows: {Theme.AccentHex}";
 
-        _mToday = Metric("🚨 HOJE", "Vencendo hoje", "#ef4444");
-        _mTomorrow = Metric("⚠️ PRÓXIMOS 2 DIAS", "Atenção necessária", "#f59e0b");
-        _mWeek = Metric("📅 ESTA SEMANA", "Prazos em aberto", "#3b82f6");
-        _mOverdue = Metric("⏳ ATRASADAS", "Tarefas pendentes", "#a855f7");
+        _mToday = Metric("🚨 HOJE", "Vencendo hoje", Formatter.UrgencyColor(0, dark: true));
+        _mTomorrow = Metric("⚠️ PRÓXIMOS 2 DIAS", "Atenção necessária", Formatter.UrgencyColor(1.5, dark: true));
+        _mWeek = Metric("📅 ESTA SEMANA", "Prazos em aberto", Formatter.UrgencyColor(5, dark: true));
+        _mOverdue = Metric("⏳ ATRASADAS", "Tarefas pendentes", Formatter.UrgencyColor(-1, dark: true));
 
         foreach (var (label, mins) in PresetValues)
         {
@@ -189,15 +189,17 @@ public partial class MainWindow : Window
         var badgeColor = isEvent ? "#3b82f6" : _data?.Today.Contains(it) == true ? "#ef4444" : "#eab308";
         var badge = new Border { Background = Theme.Brush(badgeColor), CornerRadius = new CornerRadius(4), Padding = new Thickness(5, 1, 5, 1), HorizontalAlignment = HorizontalAlignment.Left, Child = T(it.Type, 10, "#ffffff", true) };
         var sp = new StackPanel();
-        sp.Children.Add(Head(badge, T(it.DeadlineStr, 11, "#a1a1aa")));
-        sp.Children.Add(T(it.Title, 12, "#f4f4f5", true, wrap: true));
+        var tone = Formatter.UrgencyColor(it, dark: true);
+        sp.Children.Add(Head(badge, T(it.DeadlineStr, 11, tone, true)));
+        sp.Children.Add(T(it.Title, 12, tone, true, wrap: true));
         return Box(sp);
     }
 
     UIElement CalendarRow(Item ev)
     {
         var sp = new StackPanel();
-        sp.Children.Add(Head(T($"⚖️ {ev.Title}", 14, "#f4f4f5", true), T($"🕒 {ev.DeadlineStr}", 12, "#34d399", true)));
+        var tone = Formatter.UrgencyColor(ev, dark: true);
+        sp.Children.Add(Head(T($"⚖️ {ev.Title}", 14, tone, true), T($"🕒 {ev.DeadlineStr}", 12, tone, true)));
         if (ev.Description != "") sp.Children.Add(T($"Local/Pauta: {Short(ev.Description)}", 12, "#d1d5db", wrap: true));
         return Box(sp, 6);
     }
@@ -219,7 +221,8 @@ public partial class MainWindow : Window
         Fill(TasksList, items.Select(it =>
         {
             var sp = new StackPanel();
-            sp.Children.Add(Head(T(it.Title, 13, "#f4f4f5", true), T($"📅 {it.DeadlineStr}", 12, "#60a5fa", true)));
+            var tone = Formatter.UrgencyColor(it, dark: true);
+            sp.Children.Add(Head(T(it.Title, 13, tone, true), T($"📅 {it.DeadlineStr}", 12, tone, true)));
             if (it.Description != "") sp.Children.Add(T(Short(it.Description), 11, "#9ca3af", wrap: true));
             return (UIElement)Box(sp, 4);
         }), "Nenhuma tarefa corresponde aos filtros selecionados.");

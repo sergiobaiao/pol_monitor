@@ -99,6 +99,42 @@ public static class Formatter
 
     static string H(string s) => WebUtility.HtmlEncode(s);
 
+    /// <summary>Gradiente de urgência: vermelho (vence hoje) → laranja → amarelo → verde (7+ dias).
+    /// Atrasado = vermelho mais escuro; sem prazo = cinza. `dark` = tom claro para fundo escuro
+    /// (widget/painel); senão tom escuro com contraste ≥ 4.5:1 sobre branco (e-mail).</summary>
+    public static string UrgencyColor(double? daysLeft, bool dark = false)
+    {
+        if (daysLeft is not { } d) return dark ? "#a1a1aa" : "#57534e";
+        if (d < 0) return dark ? "#f87171" : "#991b1b";
+        var hue = Math.Clamp(d, 0, 7) / 7 * 135;
+        if (dark) return Hsl(hue, 0.80, 0.66);
+        // Amarelo/laranja são claros por natureza: escurece até 4.6:1 sobre branco
+        var l = 0.42;
+        while (Contrast(Hsl(hue, 0.85, l)) < 4.6) l -= 0.01;
+        return Hsl(hue, 0.85, l);
+    }
+
+    static double Contrast(string hex)
+    {
+        double Ch(int i)
+        {
+            var v = Convert.ToInt32(hex.Substring(i, 2), 16) / 255.0;
+            return v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+        }
+        var lum = 0.2126 * Ch(1) + 0.7152 * Ch(3) + 0.0722 * Ch(5);
+        return 1.05 / (lum + 0.05);
+    }
+
+    public static string UrgencyColor(Item it, bool dark = false) =>
+        UrgencyColor(it.Deadline is { } d ? (d.Date - DateTime.Today).TotalDays : null, dark);
+
+    static string Hsl(double h, double s, double l)
+    {
+        double c = (1 - Math.Abs(2 * l - 1)) * s, x = c * (1 - Math.Abs(h / 60 % 2 - 1)), m = l - c / 2;
+        var (r, g, b) = h < 60 ? (c, x, 0d) : h < 120 ? (x, c, 0d) : (0d, c, x);
+        return $"#{(int)Math.Round((r + m) * 255):x2}{(int)Math.Round((g + m) * 255):x2}{(int)Math.Round((b + m) * 255):x2}";
+    }
+
     /// <summary>Urgente = há prazo vencendo hoje; senão é o resumo diário.</summary>
     public static bool IsUrgent(ClassifiedItems c) => c.Today.Count > 0;
 
@@ -138,16 +174,17 @@ public static class Formatter
             if (d is { } t && t.TimeOfDay < new TimeSpan(23, 59, 0) && t.TimeOfDay != TimeSpan.Zero)
                 meta = (meta == "" ? "" : meta + " · ") + t.ToString("HH:mm", Br);
             var desc = it.Description != "" ? Snippet(it.Description) : "";
-            var metaHtml = meta != "" ? $"<div style=\"font-size:12px;line-height:16px;color:#1d4ed8;padding-top:2px;\">{H(meta)}</div>" : "";
+            var tone = UrgencyColor(it);
+            var metaHtml = meta != "" ? $"<div style=\"font-size:12px;line-height:16px;color:{tone};padding-top:2px;\">{H(meta)}</div>" : "";
             var descHtml = desc != "" ? $"<div style=\"font-size:13px;line-height:19px;color:{Muted};padding-top:4px;\">{H(desc)}</div>" : "";
             return $"""
                 <tr>
                   <td valign="top" width="64" style="padding:14px 0;border-top:1px solid {Rule};font-family:{Sans};">
-                    <div style="font-size:15px;line-height:20px;font-weight:700;color:{Ink};font-variant-numeric:tabular-nums;">{day}</div>
+                    <div style="font-size:15px;line-height:20px;font-weight:700;color:{tone};font-variant-numeric:tabular-nums;">{day}</div>
                     <div style="font-size:12px;line-height:16px;color:{Muted};">{H(weekday)}</div>
                   </td>
                   <td valign="top" style="padding:14px 0 14px 12px;border-top:1px solid {Rule};font-family:{Sans};word-break:break-word;overflow-wrap:anywhere;">
-                    <div style="font-size:14px;line-height:20px;font-weight:600;color:{Ink};">{H(it.Title.Trim())}</div>
+                    <div style="font-size:14px;line-height:20px;font-weight:600;color:{tone};">{H(it.Title.Trim())}</div>
                     {metaHtml}
                     {descHtml}
                   </td>
@@ -201,10 +238,10 @@ public static class Formatter
                     {band}
                     <tr><td style="padding:28px 32px 0;font-family:{Serif};font-size:24px;line-height:31px;font-weight:700;letter-spacing:-0.01em;color:{headColor};">{H(title)}</td></tr>
                     <tr><td style="padding:12px 32px 0;font-family:{Sans};font-size:15px;line-height:22px;color:{Ink};">{intro}</td></tr>
-                    {Section("Hoje", "#b91c1c", c.Today, empty: "Nenhuma tarefa/agendamento para hoje.")}
-                    {Section("Próximos 2 dias", "#b45309", c.Tomorrow)}
-                    {Section("Ainda nesta semana", "#1d4ed8", c.ThisWeek)}
-                    {Section("Atrasados e sem prazo", Muted, c.Overdue, limit: 10)}
+                    {Section("Hoje", UrgencyColor(0), c.Today, empty: "Nenhuma tarefa/agendamento para hoje.")}
+                    {Section("Próximos 2 dias", UrgencyColor(1.5), c.Tomorrow)}
+                    {Section("Ainda nesta semana", UrgencyColor(5), c.ThisWeek)}
+                    {Section("Atrasados e sem prazo", UrgencyColor(-1), c.Overdue, limit: 10)}
                     <tr><td style="padding:32px 32px 0;">
                       <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
                         <td style="background:{Ink};border-radius:8px;">

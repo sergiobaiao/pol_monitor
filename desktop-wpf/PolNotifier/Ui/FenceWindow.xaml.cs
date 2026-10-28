@@ -55,10 +55,10 @@ public partial class FenceWindow : Window
             Top = 100;
         }
 
-        _cToday = Pill("HOJE", "#ef4444");
-        _cTomorrow = Pill("+2 DIAS", "#f59e0b");
-        _cWeek = Pill("SEMANA", Theme.AccentHex);
-        _cOverdue = Pill("ATRASO", "#a855f7");
+        _cToday = Pill("HOJE", Formatter.UrgencyColor(0, dark: true));
+        _cTomorrow = Pill("+2 DIAS", Formatter.UrgencyColor(1.5, dark: true));
+        _cWeek = Pill("SEMANA", Formatter.UrgencyColor(5, dark: true));
+        _cOverdue = Pill("ATRASO", Formatter.UrgencyColor(-1, dark: true));
 
         SetCollapsed(config.FenceCollapsed, save: false);
         SourceInitialized += (_, _) => OnSourceInitialized();
@@ -127,10 +127,10 @@ public partial class FenceWindow : Window
             List.Children.Add(new TextBlock { Text = title, FontSize = 10, FontWeight = FontWeights.Bold, Foreground = Theme.Brush(color), Margin = new Thickness(4, 8, 4, 2) });
             foreach (var it in list) List.Children.Add(Row(it));
         }
-        Section("🚨 VENCENDO HOJE", "#ef4444", c.Today);
-        Section("⚠️ AMANHÃ / PRÓXIMOS DIAS", "#f59e0b", c.Tomorrow);
-        Section("📅 ESTA SEMANA", Theme.AccentHex, c.ThisWeek);
-        Section("⏳ ATRASADAS / PENDENTES", "#a855f7", c.Overdue.Take(8));
+        Section("🚨 VENCENDO HOJE", Formatter.UrgencyColor(0, dark: true), c.Today);
+        Section("⚠️ AMANHÃ / PRÓXIMOS DIAS", Formatter.UrgencyColor(1.5, dark: true), c.Tomorrow);
+        Section("📅 ESTA SEMANA", Formatter.UrgencyColor(5, dark: true), c.ThisWeek);
+        Section("⏳ ATRASADAS / PENDENTES", Formatter.UrgencyColor(-1, dark: true), c.Overdue.Take(8));
         if (List.Children.Count == 0)
             List.Children.Add(new TextBlock { Text = "Nenhum prazo pendente.", FontSize = 11, Foreground = Theme.Brush("#71717a"), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(20) });
     }
@@ -138,13 +138,14 @@ public partial class FenceWindow : Window
     static Border Row(Item it)
     {
         var top = new DockPanel();
-        var date = new TextBlock { Text = it.DeadlineStr, FontSize = 9, Foreground = Theme.Brush("#a1a1aa") };
+        var tone = Theme.Brush(Formatter.UrgencyColor(it, dark: true));
+        var date = new TextBlock { Text = it.DeadlineStr, FontSize = 9, FontWeight = FontWeights.SemiBold, Foreground = tone };
         DockPanel.SetDock(date, Dock.Right);
         top.Children.Add(date);
         top.Children.Add(new TextBlock { Text = $"[{it.Type}]", FontSize = 9, FontWeight = FontWeights.Bold, Foreground = Theme.Brush(it.IsTask ? "#fbbf24" : "#93c5fd") });
         var sp = new StackPanel { Margin = new Thickness(6, 4, 6, 4) };
         sp.Children.Add(top);
-        sp.Children.Add(new TextBlock { Text = it.Title, FontSize = 11, FontWeight = FontWeights.Bold, Foreground = Theme.Brush("#f4f4f5"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 0) });
+        sp.Children.Add(new TextBlock { Text = it.Title, FontSize = 11, FontWeight = FontWeights.Bold, Foreground = tone, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 0) });
         return new Border { Background = Theme.Brush("#1c1c20"), CornerRadius = new CornerRadius(6), Margin = new Thickness(2), Child = sp, ToolTip = it.Description is { Length: > 0 } d ? d[..Math.Min(d.Length, 400)] : null };
     }
 
