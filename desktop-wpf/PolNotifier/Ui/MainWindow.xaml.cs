@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using PolNotifier.Core;
 
@@ -155,7 +156,6 @@ public partial class MainWindow : Window
 
         Fill(FeedTasks, c.Upcoming.Select(it => Card(it, false)), "Nenhum prazo pendente para os próximos dias.");
         Fill(FeedEvents, c.Upcoming.Where(i => !i.IsTask).Select(it => Card(it, true)), "Nenhuma audiência marcada para esta semana.");
-        Fill(CalendarList, c.Upcoming.Where(i => !i.IsTask).Select(CalendarRow), "Nenhum compromisso ou audiência agendada.");
         FilterTasks();
         if (ViewLogs.Visibility == Visibility.Visible) RefreshLogs();
     }
@@ -197,15 +197,6 @@ public partial class MainWindow : Window
         sp.Children.Add(Head(badge, T(it.DeadlineStr, 11, tone, true)));
         sp.Children.Add(T(it.Title, 12, tone, true, wrap: true));
         return Box(sp);
-    }
-
-    UIElement CalendarRow(Item ev)
-    {
-        var sp = new StackPanel();
-        var tone = Formatter.UrgencyColor(ev, dark: true);
-        sp.Children.Add(Head(T($"⚖️ {ev.Title}", 14, tone, true), T($"🕒 {ev.DeadlineStr}", 12, tone, true)));
-        if (ev.Description != "") sp.Children.Add(T($"Local/Pauta: {Short(ev.Description)}", 12, "#d1d5db", wrap: true));
-        return Box(sp, 6);
     }
 
     static string Short(string s) => s.Length > 500 ? s[..500] + "…" : s;
@@ -321,11 +312,14 @@ public partial class MainWindow : Window
         sp.Children.Add(footer);
 
         // Atrasada fica com fundo avermelhado, como no POL
-        return new Border
+        var card = new Border
         {
             Background = Theme.Brush(t.IsOverdue ? "#3b1d1f" : "#232327"), BorderBrush = Theme.Brush(t.IsOverdue ? "#7f1d1d" : "#2f2f35"),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 10), Margin = new Thickness(0, 0, 0, 8), Child = sp,
+            Cursor = Cursors.Hand, ToolTip = "Clique para ver os detalhes",
         };
+        card.MouseLeftButtonUp += (_, _) => Alert.Detail(this, t);
+        return card;
     }
 
     // --- Calendário mensal (como office.pol.adv.br/calendar) ---
@@ -340,6 +334,7 @@ public partial class MainWindow : Window
     {
         if (MonthGrid == null) return;
         LblMonth.Text = _month.ToString("MMMM 'de' yyyy", PtBr).ToUpper(PtBr);
+        RenderCalendarList();
         if (WeekHeader.Children.Count == 0)
             foreach (var d in new[] { "Dom.", "Seg.", "Ter.", "Qua.", "Qui.", "Sex.", "Sáb." })
                 WeekHeader.Children.Add(new TextBlock { Text = d, FontSize = 12, Foreground = Theme.Brush("#a1a1aa"), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 6) });
@@ -364,11 +359,16 @@ public partial class MainWindow : Window
 
             if (byDay.TryGetValue(day, out var items))
             {
-                const int max = 3;
+                const int max = 2;
                 foreach (var b in items.Take(max)) cell.Children.Add(MonthEntry(b, inMonth));
                 if (items.Count > max)
-                    cell.Children.Add(new TextBlock { Text = $"+{items.Count - max} mais", FontSize = 10.5, Foreground = Theme.Brush("#a1a1aa"), Margin = new Thickness(4, 1, 0, 0),
-                                                      ToolTip = string.Join(Environment.NewLine, items.Skip(max).Select(x => x.Title)) });
+                {
+                    var more = new TextBlock { Text = $"+{items.Count - max} mais", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("AccentBrush"),
+                                               Margin = new Thickness(5, 1, 0, 0), Cursor = Cursors.Hand, ToolTip = "Ver todos deste dia" };
+                    var d = day;
+                    more.MouseLeftButtonUp += (_, _) => ShowDay(d, items);
+                    cell.Children.Add(more);
+                }
             }
 
             MonthGrid.Children.Add(new Border
@@ -377,23 +377,90 @@ public partial class MainWindow : Window
                 Background = Theme.Brush(isToday ? "#172033" : inMonth ? "#18181b" : "#121214"), Child = cell, ClipToBounds = true,
             });
         }
+        // Mês atual: rola até a semana de hoje (a grade é mais alta que a janela); outro mês: topo
+        if (_month.Year == DateTime.Today.Year && _month.Month == DateTime.Today.Month)
+        {
+            var row = (int)((DateTime.Today - start).TotalDays / 7);
+            Dispatcher.BeginInvoke(() => MonthScroll.ScrollToVerticalOffset(Math.Max(0, row - 1) * 124), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+        else MonthScroll.ScrollToTop();
     }
 
-    static UIElement MonthEntry(BoardItem b, bool inMonth)
+    UIElement MonthEntry(BoardItem b, bool inMonth)
     {
         var tb = new TextBlock
         {
-            Text = (b.IsTask ? "" : "📅 ") + b.Title, FontSize = 10.5, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis,
-            TextDecorations = b.IsDone ? TextDecorations.Strikethrough : null,
+            Text = (b.IsTask ? "" : "📅 ") + b.Title, FontSize = 10.5, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, MaxHeight = 29,
+            TextTrimming = TextTrimming.CharacterEllipsis, TextDecorations = b.IsDone ? TextDecorations.Strikethrough : null,
         };
-        var when = b.Deadline!.Value.ToString(b.IsTask ? "dd/MM/yyyy" : "dd/MM/yyyy HH:mm");
-        var state = b.IsTask ? (b.IsDone ? "Concluída" : b.IsOverdue ? "Atrasada" : "Pendente") : "Compromisso";
-        var tip = $"{b.Title}{Environment.NewLine}{state} · {when}" + (b.Description != "" ? $"{Environment.NewLine}{Environment.NewLine}{Short(b.Description)}" : "");
-        return new Border
+        var entry = new Border
         {
             Background = Theme.Brush(b.CalendarColor), CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(3, 0, 3, 2),
-            Opacity = inMonth ? 1 : 0.55, Child = tb, ToolTip = tip,
+            Opacity = inMonth ? 1 : 0.55, Child = tb, Cursor = Cursors.Hand, ToolTip = $"{b.Title}{Environment.NewLine}{Alert.StateOf(b)} · {Alert.WhenOf(b)}{Environment.NewLine}(clique para ver os detalhes)",
         };
+        entry.MouseLeftButtonUp += (_, _) => Alert.Detail(this, b);
+        return entry;
+    }
+
+    /// <summary>Linha da lista do calendário: cor do estado, título, situação/data e trecho da descrição; clique abre os detalhes.</summary>
+    UIElement ListRow(BoardItem b, Window? owner = null)
+    {
+        var meta = string.Join(" · ", new[] { Alert.StateOf(b), b.Deadline is { } d && !(b.IsTask && d.TimeOfDay >= new TimeSpan(23, 59, 0)) ? d.ToString("HH:mm") : "", b.Category, b.Assignee }.Where(x => x != ""));
+        var sp = new StackPanel();
+        var title = T(b.Title, 13, "#f4f4f5", true, wrap: true);
+        if (b.IsDone) title.TextDecorations = TextDecorations.Strikethrough;
+        sp.Children.Add(title);
+        sp.Children.Add(T(meta, 11, "#a1a1aa", wrap: true));
+        if (b.Description != "") sp.Children.Add(new TextBlock { Text = Short(b.Description), FontSize = 11.5, Foreground = Theme.Brush("#9ca3af"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 34, Margin = new Thickness(0, 3, 0, 0) });
+
+        var dock = new DockPanel();
+        var swatch = new Border { Width = 10, Height = 10, CornerRadius = new CornerRadius(2), Background = Theme.Brush(b.CalendarColor), Margin = new Thickness(0, 4, 10, 0), VerticalAlignment = VerticalAlignment.Top };
+        DockPanel.SetDock(swatch, Dock.Left);
+        dock.Children.Add(swatch);
+        dock.Children.Add(sp);
+        var row = Box(dock, 4);
+        row.Cursor = Cursors.Hand;
+        row.MouseEnter += (_, _) => row.Background = Theme.Brush("#2f2f35");
+        row.MouseLeave += (_, _) => row.Background = Theme.Brush("#27272a");
+        row.MouseLeftButtonUp += (_, _) => Alert.Detail(owner ?? this, b);
+        return row;
+    }
+
+    /// <summary>Aba Lista: tudo do mês exibido (tarefas e compromissos), agrupado por dia.</summary>
+    void RenderCalendarList()
+    {
+        if (CalendarList == null) return;
+        var monthItems = _board.Where(b => b.Deadline is { } d && d.Year == _month.Year && d.Month == _month.Month)
+            .OrderBy(b => b.Deadline).GroupBy(b => b.Deadline!.Value.Date).ToList();
+        CalendarList.Children.Clear();
+        foreach (var g in monthItems)
+        {
+            var heading = g.Key.ToString("dddd, d 'de' MMMM", PtBr);
+            CalendarList.Children.Add(new TextBlock
+            {
+                Text = char.ToUpper(heading[0]) + heading[1..] + (g.Key == DateTime.Today ? "  ·  hoje" : ""), FontSize = 12, FontWeight = FontWeights.Bold,
+                Foreground = g.Key == DateTime.Today ? (Brush)FindResource("AccentBrush") : Theme.Brush("#a1a1aa"), Margin = new Thickness(6, 12, 0, 4),
+            });
+            foreach (var b in g) CalendarList.Children.Add(ListRow(b));
+        }
+        if (monthItems.Count == 0)
+            CalendarList.Children.Add(new TextBlock { Text = "Nada neste mês.", Foreground = Theme.Brush("#71717a"), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(20) });
+    }
+
+    /// <summary>"+N mais": lista de tudo que cai naquele dia.</summary>
+    void ShowDay(DateTime day, List<BoardItem> items)
+    {
+        var heading = day.ToString("dddd, d 'de' MMMM 'de' yyyy", PtBr);
+        var list = new StackPanel { Margin = new Thickness(14) };
+        list.Children.Add(new TextBlock { Text = char.ToUpper(heading[0]) + heading[1..], FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Theme.Brush("#f4f4f5"), Margin = new Thickness(4, 0, 0, 8) });
+        var win = new Window
+        {
+            Title = "Dia " + day.ToString("dd/MM/yyyy"), Width = 560, Height = 520, Background = Theme.Brush("#18181b"),
+            Owner = this, WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false,
+            Content = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = list },
+        };
+        foreach (var b in items) list.Children.Add(ListRow(b, win));
+        win.ShowDialog();
     }
 
     void RefreshLogs()

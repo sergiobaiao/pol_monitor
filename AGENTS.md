@@ -61,7 +61,7 @@ Comportamentos que não são óbvios:
 - **Prazos de "fim do dia"** (23:59 local) são exibidos só com a data; eventos com hora real mostram a hora.
 - **Botões "Testar"** (e-mail/Telegram/WhatsApp) salvam os campos digitados antes de enviar. **"Enviar último relatório"** (Configurações) reenvia para os canais ativos ignorando a deduplicação.
 - **Início com o Windows:** checkbox em Configurações → Inicialização; mesmo valor `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\POL ADV Notifier` que o instalador grava.
-- **Painel:** Tarefas (Lista = padrão, Kanban como em `office.pol.adv.br/tasks`) e Calendário (Mês como em `office.pol.adv.br/calendar`, Lista).
+- **Painel:** Tarefas (Lista = padrão, Kanban como em `office.pol.adv.br/tasks`: colunas por `status`, cartões ordenados pelo campo `score` crescente como o POL) e Calendário (Mês como em `office.pol.adv.br/calendar`, Lista com tudo do mês por dia). Clique numa entrada/cartão abre o popup de detalhes (`Alert.Detail`); "+N mais" abre o dia. Cores: pendente azul, atrasada vinho, concluída verde (tarefas); compromissos usam a cor da categoria.
 
 ## 3b. Widget de Área de Trabalho (regras valem para .NET e Python)
 

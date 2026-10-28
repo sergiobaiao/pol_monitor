@@ -109,32 +109,34 @@
                 </TabItem>
                 </TabControl>
 
-                <!-- CALENDÁRIO -->
-                <TabControl x:Name="ViewCalendar" Visibility="Collapsed" Background="Transparent" BorderThickness="0">
-                    <!-- Visão mensal como no POL (office.pol.adv.br/calendar) -->
-                    <TabItem Header="Mês">
-                        <DockPanel Margin="0,10,0,0">
-                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-                                <Button DockPanel.Dock="Left" Content="‹" Style="{StaticResource IconButton}" FontSize="20" Click="OnPrevMonth" ToolTip="Mês anterior"/>
-                                <TextBlock x:Name="LblMonth" DockPanel.Dock="Left" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource Fg}" VerticalAlignment="Center" Margin="6,0" MinWidth="230"/>
-                                <Button DockPanel.Dock="Left" Content="›" Style="{StaticResource IconButton}" FontSize="20" Click="OnNextMonth" ToolTip="Próximo mês"/>
-                                <Button DockPanel.Dock="Left" Content="Hoje" Style="{StaticResource FlatButton}" Background="#27272a" Margin="10,0,0,0" Click="OnThisMonth"/>
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                    <Border Background="#1c64b5" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Pendente" Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,0,12,0"/>
-                                    <Border Background="#9b1c1c" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Atrasada" Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,0,12,0"/>
-                                    <Border Background="#2f9e44" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Concluída" Foreground="{StaticResource FgMuted}" FontSize="11"/>
-                                </StackPanel>
+                <!-- CALENDÁRIO (como office.pol.adv.br/calendar): navegação do mês compartilhada pelas abas Mês e Lista -->
+                <DockPanel x:Name="ViewCalendar" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <Button DockPanel.Dock="Left" Content="‹" Style="{StaticResource IconButton}" FontSize="20" Click="OnPrevMonth" ToolTip="Mês anterior"/>
+                        <TextBlock x:Name="LblMonth" DockPanel.Dock="Left" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource Fg}" VerticalAlignment="Center" Margin="6,0" MinWidth="230"/>
+                        <Button DockPanel.Dock="Left" Content="›" Style="{StaticResource IconButton}" FontSize="20" Click="OnNextMonth" ToolTip="Próximo mês"/>
+                        <Button DockPanel.Dock="Left" Content="Hoje" Style="{StaticResource FlatButton}" Background="#27272a" Margin="10,0,0,0" Click="OnThisMonth"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Border Background="#1c64b5" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Pendente" Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,0,12,0"/>
+                            <Border Background="#9b1c1c" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Atrasada" Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,0,12,0"/>
+                            <Border Background="#2f9e44" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="Concluída" Foreground="{StaticResource FgMuted}" FontSize="11"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <TabControl Background="Transparent" BorderThickness="0">
+                        <TabItem Header="Mês">
+                            <DockPanel Margin="0,10,0,0">
+                                <UniformGrid x:Name="WeekHeader" DockPanel.Dock="Top" Columns="7"/>
+                                <!-- linhas altas o bastante para 2 entradas de 2 linhas + "+N mais"; rola quando a janela é menor -->
+                                <ScrollViewer x:Name="MonthScroll" VerticalScrollBarVisibility="Auto"><UniformGrid x:Name="MonthGrid" Columns="7" Rows="6" Height="744"/></ScrollViewer>
                             </DockPanel>
-                            <UniformGrid x:Name="WeekHeader" DockPanel.Dock="Top" Columns="7"/>
-                            <UniformGrid x:Name="MonthGrid" Columns="7" Rows="6"/>
-                        </DockPanel>
-                    </TabItem>
-                    <TabItem Header="Lista">
-                        <Border Background="{StaticResource Bg1}" CornerRadius="10" Padding="8" Margin="0,10,0,0">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel x:Name="CalendarList"/></ScrollViewer>
-                        </Border>
-                    </TabItem>
-                </TabControl>
+                        </TabItem>
+                        <TabItem Header="Lista">
+                            <Border Background="{StaticResource Bg1}" CornerRadius="10" Padding="8" Margin="0,10,0,0">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel x:Name="CalendarList"/></ScrollViewer>
+                            </Border>
+                        </TabItem>
+                    </TabControl>
+                </DockPanel>
 
                 <!-- NOTIFICAÇÕES -->
                 <ScrollViewer x:Name="ViewNotifications" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">

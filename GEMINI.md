@@ -7,7 +7,7 @@ Guia para o Gemini CLI neste repositório. Contexto detalhado (APIs, estrutura, 
 **POL ADV Notifier** monitora prazos e audiências da plataforma jurídica POL ADV (`office-api.pol.adv.br`) e notifica por E-mail, Telegram e WhatsApp. Repositório público: https://github.com/sergiobaiao/pol_monitor — nunca versionar segredos, `.env`, `data/`, `swagger/*.json` nem o JWT do POL. Código, comentários, logs e textos de UI em português.
 
 ## Componentes
-- **`desktop-wpf/`** — desktop **.NET 10 + WPF** (edição ativa; substitui `app/`): login no Keycloak com senha no Credential Manager (formato do `keyring`), SQLite por usuário em `data/users/<sub>.db`, agendador, widget estilo Fences, painel (Início, Tarefas Lista/Kanban, Calendário Mês/Lista, Notificações, Configurações, Logs), bandeja, instalador NSIS.
+- **`desktop-wpf/`** — desktop **.NET 10 + WPF** (edição ativa; substitui `app/`): login no Keycloak com senha no Credential Manager (formato do `keyring`), SQLite por usuário em `data/users/<sub>.db`, agendador, widget estilo Fences, painel (Início, Tarefas Lista/Kanban, Calendário Mês/Lista com popup de detalhes ao clicar, Notificações, Configurações, Logs), bandeja, instalador NSIS.
 - **`app-web.py`** — web autocontida (SPA embutida) e Python Worker no Cloudflare; persistência no KV `POL_STORE`; e-mail por OAuth (Gmail API) ou senha de app do Google (SMTP; no Worker só a porta 465, via cliente asyncio sobre `connect()`). **Não importa nada do desktop**: regra de negócio corrigida num lado deve ser replicada no outro.
 - **`server.py` + `index.html` + `swagger/`** — Swagger UI e proxy CORS do POL.
 - **`app/`** — desktop antigo em Python/CustomTkinter, só referência. Não rodar junto com o .NET (duplica agendador e notificações).
