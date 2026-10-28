@@ -14,7 +14,7 @@ O `nuget.config` desta pasta aponta para o nuget.org (o NuGet global da máquina
 ## Publicar e gerar o instalador
 
 ```powershell
-.\desktop-wpf\publish.ps1 -Version 2.1.0   # sem -Version usa a última tag vX.Y.Z
+.\desktop-wpf\publish.ps1 -Version 2.1.3   # sem -Version usa a última tag vX.Y.Z
 ```
 
 O script gera `publish\PolNotifier.exe` (self-contained single-file, não precisa do .NET instalado) e, se o NSIS estiver instalado (`winget install NSIS.NSIS`), também `publish\PolNotifier-Setup-<versão>.exe`.
@@ -28,11 +28,10 @@ O início automático também pode ser ligado e desligado em **Configurações �
 - **Desktop:** `.github/workflows/desktop.yml` compila em cada push ou PR que mexa em `desktop-wpf/`. Numa tag `vX.Y.Z`, publica o `.exe` e o instalador como release marcada como latest. O link fixo para a versão mais nova é `https://github.com/sergiobaiao/pol_monitor/releases/latest/download/PolNotifier-Setup.exe`.
 - **Web:** `.github/workflows/web.yml` faz o deploy do `app-web.py` no Worker (`npx wrangler deploy`) a cada push em `main` que mexa nele e em cada tag. Ele precisa dos segredos `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID` no repositório.
 
-Para lançar uma versão:
+Para lançar uma versão, use o `release.ps1` da raiz (cria e envia a próxima tag):
 
 ```powershell
-git tag v2.1.0
-git push origin v2.1.0
+.elease.ps1                  # patch (2.1.2 -> 2.1.3); -Bump minor|major; -DryRun só mostra
 ```
 
 ## Dados (compatíveis com a versão Python)
@@ -45,6 +44,10 @@ git push origin v2.1.0
 ## Ícone
 
 O ícone (`PolNotifier/app.ico`) e a imagem das telas (`PolNotifier/logo.png`) vêm de `assets/app-icon-original.png`. O `app.ico` define o ícone do .exe, das janelas, da bandeja e do instalador.
+
+## Painel
+
+Abas Início, Tarefas (Lista e Kanban), Calendário (Mês e Lista, com popup de detalhes ao clicar), Notificações, Configurações e Logs. O botão **📨 Relatório** da barra superior (e o item da bandeja) reenvia o último relatório aos canais ativos.
 
 ## Estrutura
 
