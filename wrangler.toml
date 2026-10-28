@@ -7,8 +7,8 @@ compatibility_flags = ["python_workers", "disable_python_external_sdk"]  # usa o
 [triggers]
 crons = ["*/5 * * * *"] # Monitor 24h: a cada 5 min; cada usuário respeita o próprio intervalo de checagem
 
-# Persistência de usuários/sessões/refresh tokens (sem ela, o cron não tem usuários para notificar).
-# Crie com `npx wrangler kv namespace create POL_STORE` e descomente com o id retornado:
-# [[kv_namespaces]]
-# binding = "POL_STORE"
-# id = "<id do namespace>"
+# Persistência de usuários/sessões/refresh tokens (sem ela cada requisição começa vazia: o login "Lembrar"
+# some e o cron não tem usuários para notificar). Sem `id`, o wrangler cria o namespace no primeiro deploy
+# e passa a usá-lo nos seguintes (provisionamento automático).
+[[kv_namespaces]]
+binding = "POL_STORE"
