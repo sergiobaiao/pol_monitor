@@ -11,7 +11,10 @@
 
         <!-- Barra lateral -->
         <DockPanel Background="{StaticResource Bg1}">
-            <TextBlock DockPanel.Dock="Top" Text="⚖️ POL ADV" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="24,24,20,20"/>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="20,22,20,18">
+                <Image Source="/logo.png" Width="40" Height="40" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <TextBlock Text="POL ADV" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </StackPanel>
             <TextBlock x:Name="LblUser" DockPanel.Dock="Bottom" FontSize="11" Foreground="{StaticResource FgDim}" Margin="24,16" TextWrapping="Wrap"/>
             <StackPanel>
                 <RadioButton Style="{StaticResource NavButton}" Content="📊  Widgets / Início" Tag="Home" IsChecked="True" Checked="OnNav"/>

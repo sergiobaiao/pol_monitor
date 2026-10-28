@@ -42,6 +42,10 @@ git push origin v2.1.0
 - **Senha lembrada:** fica no Windows Credential Manager, no mesmo formato do `keyring` do Python. É uma credencial genérica com alvo `POL ADV Notifier` e usuário = e-mail (ou alvo `e-mail@POL ADV Notifier` quando outro e-mail já ocupa o alvo simples). Uma senha lembrada por uma versão vale na outra.
 - **Instância única:** abrir o .exe de novo mostra o painel da instância que já está aberta. Não rode a versão Python ao mesmo tempo: o agendador e as notificações ficariam duplicados.
 
+## Ícone
+
+O ícone (`PolNotifier/app.ico`) e a imagem das telas (`PolNotifier/logo.png`) vêm de `assets/app-icon-original.png`. O `app.ico` define o ícone do .exe, das janelas, da bandeja e do instalador.
+
 ## Estrutura
 
 | Arquivo | Conteúdo |

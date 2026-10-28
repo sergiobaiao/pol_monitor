@@ -205,37 +205,63 @@ async def pol_detect_office():
     except Exception as e:
         log("WARNING", f"Não foi possível detectar o escritório: {e}")
 
-async def pol_get_tasks() -> List[Dict[str, Any]]:
+async def pol_fetch_all(path: str, label: str) -> List[Dict[str, Any]]:
+    """Todas as páginas (size=100&page=N); o gateway devolve só a primeira sem `page`."""
     if not await pol_authenticate():
         return []
-    url = f"{GATEWAY_URL}/services/lawoffice/api/task/tasks?size=100&sort=deadline,asc"
-    status, _, body = await http_request(url, headers=pol_headers())
-    if status == 200:
+    out: List[Dict[str, Any]] = []
+    for page in range(50):
+        sep = "&" if "?" in path else "?"
+        status, _, body = await http_request(f"{GATEWAY_URL}{path}{sep}size=100&page={page}", headers=pol_headers())
+        if status != 200:
+            log("ERROR", f"Erro busca {label} HTTP {status}")
+            return out
         try:
-            tasks = json.loads(body.decode("utf-8"))
-            log("INFO", f"{len(tasks)} tarefas sincronizadas do POL.")
-            return tasks
+            arr = json.loads(body.decode("utf-8"))
         except Exception as e:
-            log("ERROR", f"Erro parse tarefas: {e}")
-    else:
-        log("ERROR", f"Erro busca tarefas HTTP {status}")
-    return []
+            log("ERROR", f"Erro parse {label}: {e}")
+            return out
+        # Guarda contra um gateway que ignore `page` e devolva sempre a mesma página
+        if arr and out and arr[0].get("id") == out[0].get("id"):
+            break
+        out += arr
+        if len(arr) < 100:
+            break
+    log("INFO", f"{len(out)} {label} sincronizados do POL.")
+    return out
+
+async def pol_get_tasks() -> List[Dict[str, Any]]:
+    return await pol_fetch_all("/services/lawoffice/api/task/tasks?active=true&sort=deadline,asc", "tarefas")
 
 async def pol_get_events() -> List[Dict[str, Any]]:
-    if not await pol_authenticate():
-        return []
-    url = f"{GATEWAY_URL}/services/lawoffice/api/calendar/events?size=100&sort=startDate,asc"
-    status, _, body = await http_request(url, headers=pol_headers())
-    if status == 200:
-        try:
-            events = json.loads(body.decode("utf-8"))
-            log("INFO", f"{len(events)} eventos de agenda sincronizados.")
-            return events
-        except Exception as e:
-            log("ERROR", f"Erro parse eventos: {e}")
-    else:
-        log("ERROR", f"Erro busca eventos HTTP {status}")
-    return []
+    return await pol_fetch_all("/services/lawoffice/api/calendar/events?sort=startDate,asc", "eventos")
+
+def board_data(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Tarefas (todas, inclusive concluídas) e compromissos para o Kanban e o calendário mensal."""
+    now = datetime.now(TZ).replace(tzinfo=None)
+    iso = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%S") if dt else None
+    out_tasks = []
+    for t in tasks:
+        if t.get("isArchived"):
+            continue
+        dl = parse_date(t.get("deadline"))
+        status = t.get("status") or "TO_DO"
+        cat = t.get("category") or {}
+        out_tasks.append({
+            "id": t.get("id"), "title": (t.get("name") or "").strip(), "description": (t.get("description") or "").strip(),
+            "status": status, "priority": t.get("priority") or "MEDIUM", "category": cat.get("name", ""),
+            "color": cat.get("color") or "#71717a", "assignee": (t.get("assignedTo") or {}).get("name", ""),
+            "deadline": iso(dl), "score": t.get("score") or 0, "overdue": bool(dl and dl < now and status != "DONE"),
+        })
+    out_events = []
+    for e in events:
+        cat = e.get("category") or {}
+        out_events.append({
+            "id": e.get("id"), "title": (e.get("title") or "").strip(), "description": (e.get("description") or "").strip(),
+            "category": cat.get("name", ""), "color": cat.get("color") or "#1c64b5", "location": e.get("location") or "",
+            "start": iso(parse_date(e.get("startDate"))), "end": iso(parse_date(e.get("endDate"))), "full_day": bool(e.get("fullDay")),
+        })
+    return {"tasks": out_tasks, "events": out_events}
 
 # =============================================================================
 # E-MAIL VIA GMAIL API (OAuth do próprio usuário; o Worker não tem SMTP)
@@ -540,13 +566,14 @@ LOGIN_HTML = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>POL ADV — Entrar</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="icon" type="image/png" href="https://office.pol.adv.br/content/images/pol-adv-favicon-96x96.png" />
+  <link rel="icon" type="image/png" href="data:image/png;base64,{{LOGO}}" />
   <style>body { background-color: #09090b; color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }</style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-4">
   <form id="login-form" class="bg-[#18181b] border border-[#27272a] rounded-xl p-8 w-full max-w-sm space-y-4">
     <div class="text-center">
-      <h1 class="font-bold text-2xl text-blue-400">⚖️ POL ADV</h1>
+      <img src="data:image/png;base64,{{LOGO}}" alt="POL ADV Notifier" class="w-20 h-20 mx-auto mb-2">
+      <h1 class="font-bold text-2xl text-blue-400">POL ADV</h1>
       <p class="text-xs text-zinc-400 mt-1">Entre com sua conta do POL ADV</p>
     </div>
     <input type="email" id="email" autocomplete="username" required placeholder="E-mail" class="bg-zinc-800 border border-zinc-700 text-sm p-2.5 rounded w-full outline-none">
@@ -596,13 +623,14 @@ INDEX_HTML = """<!DOCTYPE html>
     .card-glass { background: #18181b; border: 1px solid #27272a; border-radius: 12px; }
     .active-tab { background-color: #27272a !important; color: #ffffff !important; }
   </style>
+  <link rel="icon" type="image/png" href="data:image/png;base64,{{LOGO}}" />
 </head>
 <body class="min-h-screen flex flex-col md:flex-row">
 
   <!-- Sidebar Lateral -->
   <aside class="w-full md:w-64 bg-[#18181b] border-r border-[#27272a] flex flex-col p-4 shrink-0">
     <div class="flex items-center gap-3 px-2 py-4 border-b border-[#27272a]">
-      <span class="text-2xl">⚖️</span>
+      <img src="data:image/png;base64,{{LOGO}}" alt="POL ADV Notifier" class="w-10 h-10">
       <div>
         <h1 class="font-bold text-lg text-blue-400">POL ADV Web</h1>
         <p class="text-xs text-zinc-500">Cloudflare Workers Edition</p>
@@ -706,30 +734,72 @@ INDEX_HTML = """<!DOCTYPE html>
         </div>
       </section>
 
-      <!-- ABA 2: TAREFAS -->
+      <!-- ABA 2: TAREFAS (Lista = padrão, Kanban como em office.pol.adv.br/tasks) -->
       <section id="view-tasks" class="hidden space-y-4">
-        <div class="flex flex-wrap gap-3 items-center justify-between">
-          <input type="text" id="task-search" placeholder="🔍 Pesquisar em tarefas ou processos..." oninput="filterTasks()"
-                 class="bg-zinc-800 border border-zinc-700 text-sm px-4 py-2 rounded-lg text-white w-full md:w-80 outline-none focus:border-blue-500">
-          <div class="flex gap-1.5 bg-zinc-800 p-1 rounded-lg text-xs">
-            <button onclick="setTaskFilter('all')" id="flt-all" class="px-3 py-1.5 rounded-md bg-zinc-700 text-white font-medium">Todas</button>
-            <button onclick="setTaskFilter('today')" id="flt-today" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Hoje</button>
-            <button onclick="setTaskFilter('tomorrow')" id="flt-tomorrow" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Próximos Dias</button>
-            <button onclick="setTaskFilter('week')" id="flt-week" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Semana</button>
-            <button onclick="setTaskFilter('overdue')" id="flt-overdue" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Atrasadas</button>
+        <div class="flex gap-1.5 bg-zinc-800 p-1 rounded-lg text-xs w-fit">
+          <button id="tv-list" onclick="setTasksView('list')" class="px-3 py-1.5 rounded-md bg-zinc-700 text-white font-medium">Lista</button>
+          <button id="tv-kanban" onclick="setTasksView('kanban')" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Kanban</button>
+        </div>
+
+        <div id="tasks-list-view" class="space-y-4">
+          <div class="flex flex-wrap gap-3 items-center justify-between">
+            <input type="text" id="task-search" placeholder="🔍 Pesquisar em tarefas ou processos..." oninput="filterTasks()"
+                   class="bg-zinc-800 border border-zinc-700 text-sm px-4 py-2 rounded-lg text-white w-full md:w-80 outline-none focus:border-blue-500">
+            <div class="flex gap-1.5 bg-zinc-800 p-1 rounded-lg text-xs">
+              <button onclick="setTaskFilter('all')" id="flt-all" class="px-3 py-1.5 rounded-md bg-zinc-700 text-white font-medium">Todas</button>
+              <button onclick="setTaskFilter('today')" id="flt-today" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Hoje</button>
+              <button onclick="setTaskFilter('tomorrow')" id="flt-tomorrow" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Próximos Dias</button>
+              <button onclick="setTaskFilter('week')" id="flt-week" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Semana</button>
+              <button onclick="setTaskFilter('overdue')" id="flt-overdue" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Atrasadas</button>
+            </div>
+          </div>
+          <div id="tasks-full-list" class="card-glass p-4 space-y-3">
+            <!-- Lista injetada via JS -->
           </div>
         </div>
-        <div id="tasks-full-list" class="card-glass p-4 space-y-3">
-          <!-- Lista injetada via JS -->
+
+        <div id="tasks-kanban-view" class="hidden space-y-4">
+          <div class="flex flex-wrap gap-3 items-center justify-between">
+            <input type="text" id="kb-search" placeholder="🔍 Pesquisar no quadro..." oninput="renderKanban()"
+                   class="bg-zinc-800 border border-zinc-700 text-sm px-4 py-2 rounded-lg text-white w-full md:w-80 outline-none focus:border-blue-500">
+            <div class="flex gap-1.5 bg-zinc-800 p-1 rounded-lg text-xs">
+              <button id="kf-all" onclick="setKanbanFilter('all')" class="px-3 py-1.5 rounded-md bg-zinc-700 text-white font-medium">Todos</button>
+              <button id="kf-late" onclick="setKanbanFilter('late')" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Atrasadas</button>
+              <button id="kf-none" onclick="setKanbanFilter('none')" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Sem prazo</button>
+            </div>
+          </div>
+          <div id="kanban-cols" class="flex gap-4 overflow-x-auto pb-2"></div>
         </div>
       </section>
 
-      <!-- ABA 3: CALENDÁRIO -->
+      <!-- ABA 3: CALENDÁRIO (Mês como em office.pol.adv.br/calendar, Lista com tudo do mês) -->
       <section id="view-calendar" class="hidden space-y-4">
-        <h3 class="font-bold text-lg text-white">Eventos & Audiências do Escritório</h3>
-        <div id="calendar-full-list" class="card-glass p-4 space-y-3">
-          <!-- Eventos injetados via JS -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <button onclick="shiftMonth(-1)" class="px-3 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-lg leading-none" title="Mês anterior">‹</button>
+            <h3 id="cal-title" class="font-bold text-lg text-white w-60 text-center"></h3>
+            <button onclick="shiftMonth(1)" class="px-3 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-lg leading-none" title="Próximo mês">›</button>
+            <button onclick="shiftMonth(0)" class="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-xs">Hoje</button>
+          </div>
+          <div class="flex items-center gap-3 text-xs text-zinc-400">
+            <span class="flex items-center gap-1"><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:#1c64b5"></i>Pendente</span>
+            <span class="flex items-center gap-1"><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:#9b1c1c"></i>Atrasada</span>
+            <span class="flex items-center gap-1"><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:#2f9e44"></i>Concluída</span>
+          </div>
+          <div class="flex gap-1.5 bg-zinc-800 p-1 rounded-lg text-xs">
+            <button id="cv-month" onclick="setCalView('month')" class="px-3 py-1.5 rounded-md bg-zinc-700 text-white font-medium">Mês</button>
+            <button id="cv-list" onclick="setCalView('list')" class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Lista</button>
+          </div>
         </div>
+        <div id="cal-month-view" class="overflow-x-auto">
+          <div class="min-w-[760px]">
+            <div class="grid grid-cols-7 text-center text-xs text-zinc-400 mb-1">
+              <div>Dom.</div><div>Seg.</div><div>Ter.</div><div>Qua.</div><div>Qui.</div><div>Sex.</div><div>Sáb.</div>
+            </div>
+            <div id="cal-grid" class="grid grid-cols-7"></div>
+          </div>
+        </div>
+        <div id="cal-list-view" class="hidden card-glass p-4 space-y-2"></div>
       </section>
 
       <!-- ABA 4: NOTIFICAÇÕES -->
@@ -903,6 +973,14 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
   </main>
 
+  <!-- Popup de detalhes (clique em item do calendário/Kanban) -->
+  <div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onclick="if (event.target === this) closeModal()">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-5">
+      <div id="modal-body"></div>
+      <div class="text-right mt-4"><button onclick="closeModal()" class="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-lg">Fechar</button></div>
+    </div>
+  </div>
+
   <script>
     // Sessão expirada: qualquer 401 da API volta para a tela de login
     const _fetch = window.fetch;
@@ -928,6 +1006,7 @@ INDEX_HTML = """<!DOCTYPE html>
       document.getElementById('view-' + tabName).classList.remove('hidden');
       document.getElementById('tab-btn-' + tabName).classList.add('active-tab');
 
+      if ((tabName === 'tasks' || tabName === 'calendar') && !boardLoaded) loadBoard();
       if (tabName === 'logs') loadLogs();
       if (tabName === 'config' || tabName === 'notifications') loadConfig();
     }
@@ -982,7 +1061,7 @@ INDEX_HTML = """<!DOCTYPE html>
       }
 
       renderTasksFullList();
-      renderCalendarFullList();
+      loadBoard();
     }
 
     function createItemCard(item, isEvent = false) {
@@ -1034,16 +1113,274 @@ INDEX_HTML = """<!DOCTYPE html>
       renderTasksFullList();
     }
 
-    function renderCalendarFullList() {
-      const box = document.getElementById('calendar-full-list');
-      box.innerHTML = '';
-      const list = [...currentData.today, ...currentData.tomorrow, ...currentData.this_week].filter(i => i.type !== 'Tarefa');
-      if (list.length === 0) {
-        box.innerHTML = '<p class="text-xs text-zinc-500 text-center py-8">Nenhum evento registrado na agenda.</p>';
-        return;
-      }
-      list.forEach(i => box.appendChild(createItemCard(i, true)));
+    // ---------- Kanban e calendário mensal (como office.pol.adv.br/tasks e /calendar) ----------
+    let board = { tasks: [], events: [] };
+    let boardLoaded = false;
+    let kanbanFilter = 'all';
+    let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const KB_COLS = [['TO_DO', 'A FAZER'], ['IN_PROGRESS', 'EM ANDAMENTO'], ['REVIEW', 'A REVISAR'], ['DONE', 'CONCLUÍDAS']];
+    const PRIO = { HIGH: ['Alta', '↑', '#a78bfa'], MEDIUM: ['Média', '—', '#facc15'], LOW: ['Baixa', '↓', '#60a5fa'] };
+    const STATUS_TXT = { TO_DO: 'A fazer', IN_PROGRESS: 'Em andamento', REVIEW: 'A revisar', DONE: 'Concluída' };
+    const SEG_ON = 'px-3 py-1.5 rounded-md bg-zinc-700 text-white font-medium';
+    const SEG_OFF = 'px-3 py-1.5 rounded-md text-zinc-400 hover:text-white';
+
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined && text !== null) e.textContent = text;
+      return e;
     }
+
+    function parseLocal(s) {
+      if (!s) return null;
+      const parts = s.split('T');
+      const d = parts[0].split('-').map(Number);
+      const t = (parts[1] || '00:00').split(':').map(Number);
+      return new Date(d[0], d[1] - 1, d[2], t[0], t[1]);
+    }
+
+    async function loadBoard() {
+      try {
+        const data = await (await fetch('/api/board')).json();
+        data.tasks.forEach(t => { t.kind = 'task'; t.when = parseLocal(t.deadline); });
+        data.events.forEach(e => { e.kind = 'event'; e.when = parseLocal(e.start); e.endWhen = parseLocal(e.end); });
+        board = data;
+        boardLoaded = true;
+      } catch (e) { /* mantém o que já estava na tela */ }
+      renderKanban();
+      renderCalendar();
+    }
+
+    function itemColor(it) {
+      if (it.kind === 'event') return it.color || '#1c64b5';
+      return it.status === 'DONE' ? '#2f9e44' : (it.overdue ? '#9b1c1c' : '#1c64b5');
+    }
+
+    function itemState(it) {
+      if (it.kind === 'event') return 'Compromisso';
+      return it.status === 'DONE' ? 'Concluída' : (it.overdue ? 'Atrasada' : 'Pendente');
+    }
+
+    // Prazos de tarefa gravados como fim do dia (23:59) não têm hora de verdade
+    function hasTime(it) {
+      const d = it.when;
+      if (!d) return false;
+      if (it.kind === 'event') return !it.full_day;
+      return !(d.getHours() === 23 && d.getMinutes() === 59) && !(d.getHours() === 0 && d.getMinutes() === 0);
+    }
+
+    function hhmm(d) { return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); }
+
+    function fmtWhen(it) {
+      const d = it.when;
+      if (!d) return 'Sem prazo';
+      let txt = d.toLocaleDateString('pt-BR');
+      if (hasTime(it)) {
+        txt += ' ' + hhmm(d);
+        if (it.endWhen && it.endWhen > d) txt += ' até ' + hhmm(it.endWhen);
+      }
+      return txt + ' (' + d.toLocaleDateString('pt-BR', { weekday: 'long' }) + ')';
+    }
+
+    function setTasksView(v) {
+      document.getElementById('tv-list').className = v === 'list' ? SEG_ON : SEG_OFF;
+      document.getElementById('tv-kanban').className = v === 'kanban' ? SEG_ON : SEG_OFF;
+      document.getElementById('tasks-list-view').classList.toggle('hidden', v !== 'list');
+      document.getElementById('tasks-kanban-view').classList.toggle('hidden', v !== 'kanban');
+      if (v === 'kanban') renderKanban();
+    }
+
+    function setKanbanFilter(f) {
+      kanbanFilter = f;
+      ['all', 'late', 'none'].forEach(k => { document.getElementById('kf-' + k).className = k === f ? SEG_ON : SEG_OFF; });
+      renderKanban();
+    }
+
+    function renderKanban() {
+      const root = document.getElementById('kanban-cols');
+      if (!root) return;
+      root.innerHTML = '';
+      const q = document.getElementById('kb-search').value.toLowerCase().trim();
+      const tasks = board.tasks
+        .filter(t => kanbanFilter === 'late' ? t.overdue : (kanbanFilter === 'none' ? !t.deadline : true))
+        .filter(t => !q || t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
+      KB_COLS.forEach(col => {
+        // Mesma ordem do POL: campo score crescente
+        const items = tasks.filter(t => t.status === col[0]).sort((a, b) => a.score - b.score);
+        const wrap = el('div', 'min-w-[270px] flex-1');
+        const head = el('div', 'flex items-center gap-2 mb-2 px-1');
+        head.appendChild(el('span', 'text-xs font-bold text-zinc-200', col[1]));
+        head.appendChild(el('span', 'text-[11px] font-bold bg-blue-600 text-white rounded-full px-2', String(items.length)));
+        wrap.appendChild(head);
+        const box = el('div', 'bg-zinc-900/70 rounded-xl p-2 space-y-2 max-h-[70vh] overflow-y-auto');
+        items.forEach(t => box.appendChild(kanbanCard(t)));
+        if (!items.length) box.appendChild(el('p', 'text-xs text-zinc-600 text-center py-6', 'Nada aqui.'));
+        wrap.appendChild(box);
+        root.appendChild(wrap);
+      });
+    }
+
+    function kanbanCard(t) {
+      const card = el('div', 'cursor-pointer rounded-lg p-3 border hover:brightness-125 transition');
+      card.style.background = t.overdue ? '#3b1d1f' : '#232327';
+      card.style.borderColor = t.overdue ? '#7f1d1d' : '#2f2f35';
+      card.title = 'Clique para ver os detalhes';
+      card.onclick = () => showDetail(t);
+      card.appendChild(el('p', 'text-sm font-semibold text-zinc-100 break-words', t.title));
+      if (t.description) card.appendChild(el('p', 'text-xs text-zinc-400 mt-1 line-clamp-2 break-words', t.description));
+      const badges = el('div', 'flex flex-wrap gap-1.5 mt-2');
+      const pr = PRIO[t.priority];
+      if (pr) {
+        const b = el('span', 'text-[11px] font-bold rounded px-1.5 py-0.5 bg-zinc-800', pr[1] + ' ' + pr[0]);
+        b.style.color = pr[2];
+        badges.appendChild(b);
+      }
+      if (t.category) {
+        const b = el('span', 'text-[11px] rounded px-1.5 py-0.5 border', t.category);
+        b.style.color = t.color; b.style.borderColor = t.color;
+        badges.appendChild(b);
+      }
+      card.appendChild(badges);
+      const foot = el('div', 'flex items-center justify-between mt-3 text-[11px]');
+      const initials = t.assignee.split(' ').filter(Boolean);
+      const av = el('span', 'inline-flex items-center justify-center w-6 h-6 rounded-full bg-zinc-700 text-white font-bold text-[10px]',
+        initials.length ? (initials[0][0] + (initials.length > 1 ? initials[initials.length - 1][0] : '')).toUpperCase() : '');
+      av.title = t.assignee;
+      foot.appendChild(av);
+      const when = t.when ? t.when.toLocaleDateString('pt-BR') + (hasTime(t) ? ' - ' + hhmm(t.when) : '') : 'Sem prazo';
+      foot.appendChild(el('span', t.overdue ? 'text-red-400 font-semibold' : 'text-zinc-400', (t.overdue ? '⚠ ' : '📅 ') + when));
+      card.appendChild(foot);
+      return card;
+    }
+
+    function setCalView(v) {
+      document.getElementById('cv-month').className = v === 'month' ? SEG_ON : SEG_OFF;
+      document.getElementById('cv-list').className = v === 'list' ? SEG_ON : SEG_OFF;
+      document.getElementById('cal-month-view').classList.toggle('hidden', v !== 'month');
+      document.getElementById('cal-list-view').classList.toggle('hidden', v !== 'list');
+    }
+
+    function shiftMonth(delta) {
+      const now = new Date();
+      calMonth = delta === 0 ? new Date(now.getFullYear(), now.getMonth(), 1) : new Date(calMonth.getFullYear(), calMonth.getMonth() + delta, 1);
+      renderCalendar();
+    }
+
+    function calItems() {
+      return board.tasks.concat(board.events).filter(i => i.when).sort((a, b) => a.when - b.when);
+    }
+
+    function dayKey(d) { return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); }
+
+    function renderCalendar() {
+      const title = document.getElementById('cal-title');
+      if (!title) return;
+      title.textContent = calMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase();
+      const byDay = {};
+      calItems().forEach(i => { (byDay[dayKey(i.when)] = byDay[dayKey(i.when)] || []).push(i); });
+
+      // Grade de 6 semanas começando no domingo
+      const grid = document.getElementById('cal-grid');
+      grid.innerHTML = '';
+      const start = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1 - calMonth.getDay());
+      const today = new Date();
+      for (let n = 0; n < 42; n++) {
+        const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + n);
+        const inMonth = day.getMonth() === calMonth.getMonth();
+        const isToday = dayKey(day) === dayKey(today);
+        const cell = el('div', 'min-h-[118px] border border-zinc-800 p-1 ' + (isToday ? 'bg-blue-950/40' : (inMonth ? 'bg-zinc-900/60' : 'bg-zinc-950/60')));
+        const num = el('div', 'flex justify-end mb-1');
+        num.appendChild(el('span', 'text-xs w-6 h-6 inline-flex items-center justify-center rounded-full ' + (isToday ? 'bg-blue-600 text-white font-bold' : (inMonth ? 'text-zinc-300' : 'text-zinc-600')), String(day.getDate())));
+        cell.appendChild(num);
+        const items = byDay[dayKey(day)] || [];
+        items.slice(0, 2).forEach(it => cell.appendChild(calEntry(it, inMonth)));
+        if (items.length > 2) {
+          const more = el('button', 'text-[11px] font-semibold text-blue-400 hover:text-blue-300 px-1', '+' + (items.length - 2) + ' mais');
+          more.onclick = () => showDay(day, items);
+          cell.appendChild(more);
+        }
+        grid.appendChild(cell);
+      }
+
+      // Aba Lista: tudo do mês, por dia
+      const list = document.getElementById('cal-list-view');
+      list.innerHTML = '';
+      const days = {};
+      calItems().filter(i => i.when.getMonth() === calMonth.getMonth() && i.when.getFullYear() === calMonth.getFullYear())
+        .forEach(i => { (days[dayKey(i.when)] = days[dayKey(i.when)] || []).push(i); });
+      const keys = Object.keys(days);
+      keys.forEach(k => {
+        const items = days[k];
+        const head = items[0].when.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+        list.appendChild(el('p', 'text-xs font-bold uppercase tracking-wide text-zinc-400 pt-3', head));
+        items.forEach(it => list.appendChild(listRow(it)));
+      });
+      if (!keys.length) list.appendChild(el('p', 'text-xs text-zinc-500 text-center py-8', 'Nada neste mês.'));
+    }
+
+    function calEntry(it, inMonth) {
+      const e = el('div', 'text-[11px] leading-tight text-white rounded px-1.5 py-1 mb-1 cursor-pointer hover:brightness-125');
+      e.appendChild(el('div', 'line-clamp-2 break-words' + (it.status === 'DONE' ? ' line-through' : ''), (it.kind === 'event' ? '📅 ' : '') + it.title));
+      e.style.background = itemColor(it);
+      e.style.opacity = inMonth ? '1' : '0.55';
+      e.title = it.title + ' · ' + itemState(it) + ' · ' + fmtWhen(it) + ' (clique para ver os detalhes)';
+      e.onclick = () => showDetail(it);
+      return e;
+    }
+
+    function listRow(it) {
+      const row = el('div', 'flex gap-3 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-lg p-3 cursor-pointer');
+      const sw = el('i', 'inline-block w-2.5 h-2.5 rounded-sm mt-1.5 shrink-0');
+      sw.style.background = itemColor(it);
+      row.appendChild(sw);
+      const body = el('div', 'min-w-0');
+      body.appendChild(el('p', 'text-sm font-semibold text-zinc-100 break-words' + (it.status === 'DONE' ? ' line-through' : ''), it.title));
+      const meta = [itemState(it), hasTime(it) ? hhmm(it.when) : '', it.category, it.assignee].filter(Boolean).join(' · ');
+      body.appendChild(el('p', 'text-[11px] text-zinc-400', meta));
+      if (it.description) body.appendChild(el('p', 'text-xs text-zinc-500 mt-1 line-clamp-2 break-words', it.description));
+      row.appendChild(body);
+      row.onclick = () => showDetail(it);
+      return row;
+    }
+
+    function showDetail(it) {
+      const body = document.getElementById('modal-body');
+      body.innerHTML = '';
+      body.appendChild(el('h3', 'text-base font-bold text-zinc-100 break-words', it.title));
+      const chip = el('span', 'inline-block mt-2 mb-3 text-[11px] font-bold text-white rounded px-2 py-0.5', itemState(it));
+      chip.style.background = itemColor(it);
+      body.appendChild(chip);
+      const rows = [[it.kind === 'task' ? 'Prazo' : 'Data', fmtWhen(it)]];
+      if (it.kind === 'task') {
+        if (PRIO[it.priority]) rows.push(['Prioridade', PRIO[it.priority][0]]);
+        rows.push(['Situação', STATUS_TXT[it.status] || it.status]);
+      }
+      rows.push(['Categoria', it.category], ['Responsável', it.assignee || ''], ['Local', it.location || '']);
+      rows.filter(r => r[1]).forEach(r => {
+        const line = el('div', 'flex gap-3 text-sm mb-1');
+        line.appendChild(el('span', 'w-24 shrink-0 text-zinc-400', r[0]));
+        line.appendChild(el('span', 'text-zinc-200 break-words', r[1]));
+        body.appendChild(line);
+      });
+      if (it.description) {
+        body.appendChild(el('p', 'text-xs text-zinc-400 mt-3 mb-1', 'Descrição'));
+        body.appendChild(el('div', 'whitespace-pre-wrap break-words text-sm text-zinc-300 bg-zinc-950/60 rounded-lg p-3 max-h-72 overflow-y-auto', it.description));
+      }
+      document.getElementById('detail-modal').classList.remove('hidden');
+    }
+
+    function showDay(day, items) {
+      const body = document.getElementById('modal-body');
+      body.innerHTML = '';
+      body.appendChild(el('h3', 'text-base font-bold text-zinc-100 mb-3', day.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })));
+      const list = el('div', 'space-y-2');
+      items.forEach(it => list.appendChild(listRow(it)));
+      body.appendChild(list);
+      document.getElementById('detail-modal').classList.remove('hidden');
+    }
+
+    function closeModal() { document.getElementById('detail-modal').classList.add('hidden'); }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
     async function loadConfig() {
       const res = await fetch('/api/config');
@@ -1215,6 +1552,11 @@ INDEX_HTML = """<!DOCTYPE html>
 # =============================================================================
 # ROTEADOR DE REQUISIÇÕES (API & STATIC)
 # =============================================================================
+# Logo do app (assets/app-icon-original.png reduzida a 96 px) embutida: o Worker não serve arquivos estáticos
+LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAA7tklEQVR42u29d7glVZX//Vm7qk66+XbupmmgyTQtICCSg6iggoiNCGZFB5XgiGNABdQRfdTRcXQMKIqOgqAiomBAkaTknLqbpulE5xtPqqq993r/qDrhNoKC83uf9/m91tP3OadPqDq1194rfNd3rQ3/PP55/PP45/HP4/+vh/yfO7XK/2VDpf/fFuSSKwMu0JArNUD/bxt8QASu1Owel1wZ/G9NMPmHZ/mVGE4R98z3LgjZ+SUBhaqS9ApPbK/s2f3+o9B6IVmd/Y7C9jrl+V89ur435eVHYc+/cr5nfO9Zvr/tNco7KfcAO28yPHGHg4vsM2/xxpCLjnT/yOp44QK4UoOugRc+Wz/I9Jpj1Mi+ODcf5wdQwnz2CKqKU1ERleyqCmpw+ewyoFZVQLJfJYoCqqhVxACBgPXZ57vvQck+K+3ZKjifXcOrIAKqqt4jgel8xwPqUQwICF4QA94rgiICTgXFEphJVFZpqvfTSG7iP7/+57ZQlmjAVX9tEv4fEYAKiiDimfXbHj5w6NulN3gH6L5oBBN1qNYhTsDlg6WtCZI/qoL32aNI9jx/Wcjfa/8y7XpQ2gMt+c/vPk/3dbx2viuA77pjr5lgW5rdSOfc+Pwa+Q/wHoxBggCKFbTUB4EBgoe1ab/Hg3+5lJtOGuMCNVyEPt/V8PwEcIEaLpLsVs7fuoTZvZ8WCXdjwxbYMuqIU4dHMAjqMzUpncHOJ2ImmHyCZQOvbSFkA+HbaldV2z9StWtARcC57LNius5F/v1MUu1rassxEM0/NHUJtU6dfze7an5t9fkfineqgTEMzAqZvgMgT+nE5Cf47sL/ecYY/a8KoHXi7a4sy5mv/Dp9lbezaQusH0lwzhAY05lFCuolVwz54LpMCJrNvny6ZzNRNR8EzW/aCyqZPtKuCeUzXdPSaJlQ2/osE4K2BCX5P83l6RFDdl6vuYB9LovWb8kGW1qiMip4UXUWRDLdqA51FvHOK+JlaHZBZ+0KjfrleuMN72HpuyafjxDkeQ3+q++eLofsdg2VnoN5/ImERmKIAoP3+SB3CcD7bDl7j8ET4FHvkWeoiNbs08575CrC5+MoncGnSyAiggJeFe/zARfNv959a9q1IqS9wsCjvnO97lWHKgQq4lDNf0gmTD/lN+ASL0Hkmb9vQTH36mP3vZpbTl7/9wrhbwvgggsMF16oHHbroLxy8R8Iwn1ZtjLGSEQggveo9doZ2FwY3kI+8LYRZ3bBpdnNe9c1KLqN7n6mKmqtlLZwW1IxAiaAvgpBEGWnEWnr70wIkq+M/HzGdHSVKogT1dzgb2N7xHjBourd1N/RVkstm+IhbaYyf7+iRr2P6lN3Hc0fT9sIFxi4yP8DAmi5mReKfOLs6ymVX6aPL4sJTUEQbfkreJdNw9ZNWgveYsThxqvMnaaceNAMdphRQtSh6lsqRxBRyQdW20ZWOjfZbYDbGjs7rBpWb6ryg988QVNLhMUSHpMbVQSCjtFo2ZPWWy2DK17UZ3ahpe8zH0M7K6RlM3JBBEG2ElryygStYGMr8w8oqA9v13X3HMXMnpSrlvjnMszPLYCWe3XO2n+XWbM+xuOPxBgTIdrR7y0vxucz2zuwCQaHGx3ljUdO42vvP4DhgfIzpPss19/2dQWw+V341kQ1sGJDSkkcq1et5bhzfkpSGiIoVPCarwwTAKZ9p6rSdp7aAu7S/W17AAgtw5v7q96DOkQsvt4EIOqJ8D5AJWoLQVya6vxDilod+RrXHHkWS64MuOoU9/wF0PriO5ceKHNm/YXN6x3N2CBGpqgMbelzn3klPiHwFjs2xsG7htz2teNwXrTWTLPZm7t/LXOr3Z5pl6bRrue+y263BIAIy9fVxCd1jt9/Ltfc+BCnnHcFtjwdU6zgCcFEuRDylZMbUm0PcNfszvW85iFAx5NqrQSPkFDxo5y8f4PxiTF+e38v9M8g0TKqUWcyRhWn0xZFunnVEdz4+pufSwjhswpgzyUKIL09F5OkhmrNEUWC+HwSiU5xH1VBc7fQpdAY5SNvOBQIqDZiotBkt63tpYOqZoOb6QjNVaxAZ+W3fPXu53S+r0aQeup41VF788PPNDntvP9BB+ciUQV1US4Ek7mq7YDLCb7lHikGRdsrwKNoZl4ke917TxAottrgtMOX8q2LE/yWrfzHD/r43JVVTN8cmtqbCyGCZBwam6DS/zng0NZY/rUjeFbV89/igzc9fLQODV3IprUW1YAuF1K6DJmgiFrEZX8urlNgggvesg/Dgz1qnc8HP1cj3bM5H1jXtsWCVxWviG/ZdM3e9yrtFeEVNo02wKeyy7xB1o/G7Lt4e3aa3ccvrrkJU4hyPd5l6FsOQMtJUIvRBFtvommCCWLwlkAcrl7FT4zjkxgJIcDibcw8Huek7W8j6ok4+MAqw8EkN98RQCEg1TBTdWKMJOOW8qwFzHzZXfzgRctYcmXAo1fp37cClgBXge8pn0HqIIk9xhhUMgdZFYx0lqr6zDdWBzYFGxO4JkbAeUSzSFUVKERGRALNB1Loct27/k/3CmgJKUk9Seq7wgJtr4goNDy9JeZ1rz2Uar3J2Z/4IeGM7aDQh5cCEkSZ4WgpfXWoS7C1mIULBJdWeWqVwVQMdnySeQvnsesuOzA2UeO+ex4lMQGlHsMNS+fy+o9tz9ffu44F+w7zrpMbbFif8IVfC6VBoen6EVNAfarYCaXY807g18+2AsK/6vmcIo6X/2YY1WMZ3wwi2UoxmukQ6PjD+cwSPFiXzSyXoLaZLeuOEyNRaFi1sUatmYqI5GqmFVghbUdKaWkIaflGzqlMG6joQH8vcWoBxHvFtIMq0WIY8PTmWN546sto1Bt8+DNXEM7aDgkq4AoQFtr+fCAWbUzw1Q8v4B2vXoHbeitfuKyXC749h8988o2cdfxu9K9+DB/M4WY9mHd88oesenoLgz0BNz69gNMutvz4I0+z4MXT+dDpm7j9kQo3rSsSlgKsA0ECrW8EM/wyFpw3m6tO2dCBBp5LAEswXIWjd+AggtI0aiMWMLSnqAiCqssNr7ZmUy4IteBTUNs9g7WnFMgN96zn6jtWU4gM1npx3mW4l5cs7vIOax3Oe5x6wWc+uPOKdU5LgcjZpx7E3DnTieO07Y62/AAPRGGg6zbFvOktr5Fqrc6nv/Qzwlnb44MiaJEgCFBvSdaM87KXTfIvr7kZu2wFhfFJ/m1hlfmf/gZvP2IufOOjpE+tUV23lSNferRcffF7OfRtF9PrG+y9oMkjywc477/r/OBTo5S37+MDJ67m7q8MocUSlgKYomBrVnpm9enMBS9lFVez5KpsbLsO8wwBbPqTAJgo2B91ire+DZ5Zr+pcHrrmg99yPVtuKFbQfCXkQ6SKGGN07eYq9WYCDlWnihcVb9R5j3UW6zzOK94r6lSt9yTWk+ag3rrRSd2wdYIwyFZOYESDIHPkrPPiveJVCQXWbqjz9ne+gXPeczx23QpMWiWwE6SbNxM0RjnyIOH9rwtwIyW8LCBtDJBsncHbj3gx6Zcuwq5YpabmMVpi8tvf1xc9eDvHHr4bX37nE/zq0kmWHDrGTcsGufxqhWbCYYtr7L/d02ijitFs9eNSFRyE0YuzsX1E/rYKmnlkK+zZHWvlGcikZiBYbuAyYCU3aoLLoFwUvO0AXCI0E8dxL5lPoWBoxFY6kSU4zQIeVVFVLxm0AN57XA4rp9Yze/pO7LvHfG3EFhGhr1zgyTWjpNYy3F8gcZBYiC0Ui+hk3cu/nvc2FPjqN38O0XTe8JoZnH/mIHvvFULzSVy1R8PZilb6pTxvO5ItCWbZCsQE+LEGrumIxeDvvJu50xcy7ckH6bWz+fg7i9z9gOOKW/p4/XET9G8f8vJFm7jpqQnC0gDel1FVUdsEY3bOxnavv8MI79kG0GZkqkSlhVy2MJIMd1BpK22cCC7D210X1NxaA4Japwz0FnnDUbuocz5XhKYdUfgMpxPfwudyfz/Hd8XnyHYttm2oZqCngJeA71z7MAvnDZCkVlIH1jq8CqnLVtAhxxzFvQ+v4+UHbOETH3oxMExSfUCl0cQkDbQ+AbWmyoZlIrsNiJtQ1dGN2EKJRjNl69aqzNx9N5bd/zQfvqGfmw5vMHcX5bUHey75ZZH7HvEcsQPst1OVHsaZcDPA2Cxe9Qmom97t2v99cYCzYQdG9rnL3MHeRVBtjZAnc+i96wQ2XShlawk5n2VoTGDUdzxZacM8po0YZKcI8kBUIQihHvtsgeXQQhgIu8yfpktXe255eKPUqg1NnRXvsxXlvFIIlYmq8K7TZvHW1/aSJPMgvU+DZDm4SUht5jxIAb9lKY3e32nhvM8ycfabaUxsplGP6Xvdydy+4+7c+R8/oFmbxx//vI7jdrcctEj55tURj64ucITCvOkJg8Ua42kTCglQQHwKLg2zcbjw7w/E1HuVFqKpkgdD2k5StOAPvMuiRHHSgTA7YazmOL4xhjT13PbQOqnGFsn9/Rbe77zHZdkuUc1sgfpW0Kao8+yzx3bMmNavzThFEQJj6C0V2GPBTObPGKDaSCVOLc57UudVVWkkjnVPLZOTDluBS/dG0jvVJMvAViGtQ9rMXOc4oTA8oCPXf4jRg78uxSuvlfqd91KcPYM7e/o598P/TqPpKRaL3LO2wHHWMXeap6/sWbs1BBvTX3b0FWJopoi3qIQ5xOH1ebihbS87S6p4j4rpykblrpTvhiHacEQe3jrUuwx2ULBO6SkH/Ozmlfzq7tX0VQpYn4X3zvksW2kV61x+SY93Tp33oh48XpvNJrc+sErOP+MYxJjM65LM/y8TAUIhCkmtxzqH9Z7UO558ZLPsOXc5/UOTJLUnCewaSGuQTEDSgDTOYxeLMwHTdjSs/cWZ+oTdRYZ32oWPXGH56Q0rMKUS/cP96ht1qWoE4iiHHiOehjWgisFhxGfxkDoU14qV5HkLoA1GeQXThQ9IlpNU7eAlgs8jeBWMk9ZS0S5GgQKFUAhMHkP4LMRXVVw+mNniyqAAzWFlbamzIMTmasXnOQSfI6dBYAijAIwQBo7UGVLriBuWkdFRXvTiNdmAxw1wVUhbs78ONkbSBLUWVAl6QrbbCwrLl+vg2uUyd2sZgl2p9BbxqgTA9GkBBFCrempNGBgwEHiSplKPuzAyye+VZ0ekn30F+C6ULAeLc50jqqbl4edLrO2WZolupqT81IjQiB2vOHABMwZLTDYSRITuwCvzdDMdn6styQSSicA5z547zWawv0g9hno96c4qEhqjkuXd8EDqHOPVBNfczILpW6BZxzg0m/2NXPU0wMZomkCagLOZuiw4huYEVMrorkmP8FCAikGAkkk55KAipOM8udYw1hDmbw8YZcsYjNRDKEvLUclTp/YFCEBbBtVnsHme79OWIdYsXdgSj7R9VSdZ6OVbYJsoqMtXz0v3nofJPiEtTKeNAksnXy75Z5QshWwEJhueX90xIgNBg8V7zKHetIpvacMuYeYradPmBgPlzUzrHcM2PWJTSOqQxODiTP3EcTb4aZoZY5c5FsZ4KChVl0FmJoyo1xPecZLhgH0NbI259o4BCpWAAxYpJCmPryozGpeQHpPZTcmzy2ZKYvXvFUB+R95PYQ0IaDs2EEW6VoD6Fnbg26yDblA/zLOXsXXSjfGQIaviFUwQqPOeZuIyk65gFcoGOf+qLfz0V0uRJ3/N5z54NK8+8TgmJhuZ2LUF2inWeeIklac3jbPXzE1gJvFpqIGLs5nvmtmgx3EmjCTJBj/JBdBCokNYM1nMMCQRtVKSA7dbQxhs5k+3Frn81h6Of3mZPXeehM0xf3h4JrGUiTTKVa/J5qLqCzLCtIxwdzJD8Z3EulFBfIbqd0OcOemm7TSpUogC1m6sypU3LifJDW/XXxbFekeaWnnNobvrXrvOoRlnOYQwEMarTX59zY2YyfX4rcu57toGJ5x0HNYpxkjmBec2IrGOyXqTkZFx9j1gI6QpkqZgm2BzdZNMnfliHZq6TNo+hwgMrBqNIAhwRITlQM//0Wy5+V7l+vt6MD0Fzn1LgSAdYc3KiGsfHCIqF7EaZlwjbSeZzQuxAZkXJNLJGOFzq97SEaKIZtFySzXlEEUnzQjeI8XQ8Ns7VnH745t0Wm+BxLqOEfY+84rwjE82qNZi+czOszT1WZLdW8+MGT28+UUTfPt7v6ecbuTk17+bJL9G6shThCpp6kiSWFevbzJYXsv+Oy3HTzTUJK5rwG3+mCLWotZlhK/Ug1XU5qljFVk/nhl3q4EQFFmVzOEbdwxT9JN84bwiBy1cDVuq/Od1c1nbnE6xUkYlRCTIEkAyhd30fFYAnQElyHO4PvdOAPGCNypeteMRdQmipZPzOCx1sHjhNB5cuUWMiIYhomoyqEFD9epw6iX0cMCe26FipL/o8Rg2V6Gx1WEWHQv7FJGND9CUQTZs8RKZiL6K0GymTNYSmmnKpvGUtRu2cubL76NEQppUMGlDSJtKnECzIdkKSFUTjyQejT2k2rbiBogd1JpZjllV8BIRFgJEiuw/f4KzjnsU6lu44dY+vn7LPEpDfSRSAYlytp1hWw7S8xBAVwJDWpwdl0dkAhoo6nJY2nel9VqGomMRRUQbsWX/Peey8/xBaSZORHJ+VqaixGumhouRMHdGH1tr8Ieljqvv2sSjyzcxvnEzk5NNJG5St5Z/O/9rDO72KMMz5/GSRdtx1P6z2WFumXo1YXJik/zb625jl9l10ubeBGWHplVIq4KtKo0JaExAvSHU6qiPkUaiGjtoeGhmtx2pUCwIgkHFoARYLaCh8tj6AX5ymaVSHOBd319AUp6BSC+YUhaAiengMC8oEPN2arox84YyIChPS3Zyqi1Gme8ILVdfbd6TQJxa+noq2tvjxYjBBJnaRb0YYygGsKUO37+9yff+sIaH718GW9ZAdT2QEkxbiE48iWgDtVt07JFfythTc3jyzhI/vXKYow7Zlz32mMO7j/4Vuwz+lnhLiUBsRiuxiWriRGwKLlVcigYqUgohAC0HQm8KVYeMe7XjnlA8i+cmPPCUYvoFTyYEAsOIncGpPz4MbAyVHkyhgpcekAKYCJGwC1fhBcYBvov6p4q2Zz+5tc3pG74VD/h2ANciTW3D8CSxlkJoGG94Rute+oqG2BvWjjtufKzKL25bw/KHlsKmFTC5BpEaM/qg2YiZGAXxTWhWoTEqQ8ODWNnI5HidtFnhd1c9zCPz4StLJmGsTtFlvj1Os0g3sappiqYJmqRgrZIkmNQisUcsYBEtisiQgaJy1hGb+ck9M3FpDwSKEiASZSnPQimfXSHeFEEKSFAAU0AlyNh4Qua6vyAviA5ZSTNMUqTlVbXhiZbhdR3vaBtObXfiJIpCNm+ucuLnHmfdRMJg2ZCKsHVsDL9hHYyshNo6BvuUY1+2F8ceeyhzt98eZxPOO/d8li9bDbX1etxJr5J3/OvHGd28iQfuf4DfX/d7li19gnWPVfnGpQ1ec4jHNlOKoZVS6LVcUCkZC8VUiZxQSDPcWp3S8NDwpA3BN1FJPOKEeBQO2L4mHzpuA//+6yGiks+yKZJRXhQBMVkUZMJ89of54LeG54VGwtpx/CUDiTMCk7Re1g7LmXz2t0msPndDla4YK/u/wGSjyfKbrwZvqVcqyvio0BzDFC0L5/Xz8pMO4vhXH8P8hQtxHppNS6EQ0jtnL1i6BpyXWXPns928GfSWSyxYuAtHHPMy7vzLbfzummt574V/5v1+K6qevt6IUgHKUcy0QcPO00V2mGbpGxJmDRq2nxHIDkMB80ueSmSVyMM4kCqNVHAbRZfstVX+/fdpDg5IxmWQCEyYE4NNJhRCMGFmM+hCj1+QCsLLlBA1j8S0jXLm6ka68oE5CNWmp2Ri6hD6RGg0U+ZvN6S/u+RUOf+i73DXX26Rk5e8gr0XH8zCnbZnj732YGD6AHEMNokJjWhPwaCaSlzaAeYfBOsfRDH0ldC0JJLaJuVixCFHHcte+x/MiuVLeeSeB1i76knuu+l6JiYaMm3nw1m1ciNvmHUXh5uYhx6Fp0YNt9WEMQmoliP6Z1bkgO09+810LB6OmVOxMAPuv68CNszUqphs9kuEiMlme/u5aUPvWeY5p0bqs1PjnhuKIEsxqgadpJjxIiaDRTPVZltU5ZzSJ21DnPn5GaQgOZYHgnXCwt32YMxF9FcqTJ85hw+cfQrrR8E7T9qIiYyhUAzU+Zyy4gUf9uazLgSFYgSFMNAwCBFxTNabEuGYv/2OzJi/K/fddQf333QtUQl23Xd/HimtYbsjH+GgYyIOeqRGul5ZvVSREcd/PBHw9ZuHuFpCKBoGBz37LUjZZbbnivvmIKUiXgrZtSXIVI9E2f9p8Y4681X/mjr/K4d59oSMTimoUHGCesS7PNDVdi5Y2qioCuqkTf+QNqbXpuhb5xnsN/LlS2+g2Wzygx99kW/98DruvW8lxcARidNiFKoxMoW+p6pYl/NQjcHaLLdtjBCGhkIUUCkXtadSIjJCKRJuueZydn7x4ex52Kt54q7fs9Pu+/DVX0+D3grMEaI+WLijUN4R/lDtJ+wpUhguYcplxpqD/PGReXzrjwsZd9OgWEJNCUzu42Oy+EhMBo/n9kDyCK7rlz8nFGGeU0E5l7meOW0hh7Yzt7ZtXHJd314x0oaiVbehGHqVQiGUdRuafPuyaznnLcfymqP3YfddF/DNS3/JUH+QZ7zyFdZOaQrOK2kat3+2TW1ep5GtOmMMURgQhQEDgwOse2oFKx57mONPeROHvupUNm9Yz5zpAeujU3jZ2xrc8IDyWF34+VrPCTfuzLJkF1xgSKWCRr2Yci/hYIVoei+m1AtBBQkKqMl0v5gAMUHH39eOes6UTxdx4TkYoM9hA1yHwOpz2mDbDfU5YTVnGxsvmkfEbUNMhqS1EE9AnFeG+wyf//bNDBZTTjn5ZWyO0Q+fc7q866yLOe/9b2DG3NnEcdquPvKaIa0ZW6ITl6TWPqOIMROE0FMsc81PfsI+BxzIosUvYtNIld32P4QHb7mWY970r9z625CTL7mf0G+mqgPM2fVgpgcPsempcUxYRoMIDYq4IIKgBGEJgiKExZzqGOaupum44m2CvubVbb4rIeufNRY2z1kX22Y9a4d20jKyLn/MHZ4WXzQPvbO6gRagmj9GUcDaDTHfvuxXfPCM4+gZ7GHrWMyxLzuQHedP52vfvJyeCpJYbaOb6jOgLbW5Cspr4axN2z+tzQvySqVSYcUTK3jgzjs4/R3vJIoiLZcLevSJp7DuyeX4+haOPuF4Dnnd29jz2H/hoONO1V333I2oUICgkA1yWIawAmFPJoDWn+kOsqTlJOaqSNpJbtWuxHbuIT5/FdQOwrKMF7ipHCB8m2ncyg1kT0yH69wKxiRjKPT1Bnz9f/5EX1Dj1CWvYMuoyzM26PvPPJ3Lf/5HVq0aISoUaNGPfL6KYqskqW1H2Glq2/C98xla6zwUSyH/84Mr2W+/vdnvJQfhfUohFBbtuy8LFx/A3X+8juHhQWbOGmS7HeYwbcY0hmfPpNzTkw1HUMhnfRkJyxBVkKAIkvn3Ii39L53765rt2VLMC0Hbql/keQtAve8aXZexoiXPE7cjXQW1LfpghwCbQ9Euz245pxJFAes3JVz6w1/zwTNeRam/QpJaRQLGxi2vOv4wZk7v49uXXE5vD6SJzwZXJV8JqHcdvzq1Hus7RF3nPeVKmWXL1vKXG//AO894OyoBhUJIqRhRKkS88vWn8vg9f6Y+so65281l2rRBps8YlhkzhikUiyBZlEuQR7RhEXK9n3FLAyDINbzkTqZOKR6RlrfeqXfqqPPnIwDBC2QeTl7UklsZJx23xmeGwbtW4a10arE6vKA49fT1Bfz3j26i6Mc5+eRXsnHEqVdDapU4trgg4G1vXcJll13FuvVV8SYkTlx7kOPUY51tMwBS62i5qM5DYpVSGb5z6VXstecOvOglB1GtNjQMIsKwgE9TFu9/EPN23pM7b7ieadOmU6kUGRzsY2CwLxdACEFOaQ+iHFTL3E7NkjJ58Z6Z4tp1Jnp3Da0Xade+yQvxgryitoN2+pYBNtpO1OTeT1fVc2cV5LrfOpgxWGLL+km+99+XcOH7X8XsWRV6QpX+SiS9PZH09ZUED29720nMHCryw299i9nzAjGFomSqSDIBpC0SkZfUdlSQ9cqM4RJLH3pSbr3mh5z3gXdRLht6yoH0VQoy1FeSaYM9zJoxwJvf9z7uufFqJrasYsGOC+mplBjqr7TrFySIclghAAkRE05VO9pd9toNs0wtPERFtROQyguAIrTD/RSTLbg8Daktb0S8YHJGRCYgbSfqfaZCIgPXPdzkB39Zh93nKB6aeQwfuHoSTS0+9uAs3jqImxQjpW/vN3DZDY/TKF/PS/eZzj4HHIC1jtR6vDqBjHOaxCmJBecFb51ccssEN9zzNL2vfDe/HN2Dn161AZ/YrFgkidGkiW3UcXGKzDmcH136c/Z70U7sf8RRlEqlzHS1MPwWtGCy6FbE5ARxk+VDVEXajCbtIL8tW6g+d1ByAfgXkpRvZ8JyiZptlls7bdlVPN1Oxvi8S4BSLsI3LruDOx8cJZq2PZd++VdZYjytQTwJyWT+fAKa4xAZgoLw3Qu+j5x7DvsfdgD1UUeSOvEuyYr8AGutWpe5Aon1fPc7v6fZiDGlQa7++g8gbeTcn2rX4yTYBqZSZsWtd7H27pSDjz2aUqmIMUFuVHO4Qbrqy8j6j7QK/EQUxeW1ToF24Ifc45lS3qQ8FxpknpsVkSXkxeQXxEmrtDMrvG7lCOhywXy7IEC9J1E461XTkcnl+M0rKLiNhLqJUDcQyibCYCuh2UoYjROW6kSM4DYvY/b8+Zz8lncwOurABMSpx1ubJ5E91iZinSNOLAODPfqWw8qw7n6C0eVErfOzhdCMEgYTGkRVDYoJYcli7FYleZrXv/O9DE2bg6jDtMpXW/hNrvPbnl5Lt2tGIs65lNoOuryfUiDeLrnVnKj1/N1QnaKKOpXs+aC3rY62VU4X7pnX2QrjVTj88L04+7TdcOuWktQ2QzyCxuP4eDL7S2qqNlG8Ix0bo6cofPyLX6Z3xhyazVisF5qpx7eWNJ40SWg0U/FeZXQilte+9mgOPXA26dpluPpWSCbQtIpPJtWnNdTGiE/VJbHarevkiNe+geNPfzfNWpUMS6LDZGgNfvsx1+LdJZYiKtIpVux8v6WpO25pXkzxAlKSeNAU1aDVXwS6i7/b+q47Ge+zn6NeW5mw0fFEz3rPCdJfga/+148Z3zwKoWTncgmkTaE5oSR13WPx7nLupz7Dbvvsr5PjDTCBFCMjBkXjScTF4BJc2iAqlvAW4noNLUR86MPvYbjvEq775fXYekMxZKvWxUpSxzeqlHrLcsKZ5/C6M/6VRmxRk2mXKbO3M9q5D5PXGbcKxPPPtuqdW8/Btg2xdtvQFwRFdFe0q5uyPLdNR4LLS5danlAWRbmc5y8K4xOpnn76CRx4wGK59me/5q4772b9hg3YxFAp9bHjgkVyyDFHc/DLX0Oh0sfEeJ0gDElTx7d+t4q7HtyADM8XGmUkmsb6JOXj//Z5XnroIo542cupN5pIGOq7zz1XjjjmcP50/XWy9JEHGRsdQbQgw8Pz2WvxPhzyyhPZbrd9dLI6ifMO39UfpVXLkM22LgYIrk3Vzqj4eWlEi/vUGnyd2noB/nbjlPBvNzLQrvSidFSSaKf6HHJOonQ1d+hABDZ/a3w8ZuZ2O/CeD76PN03GjI2NkaSWYqmslf5hxCDVapOk2dAoMFIqFbjxnkf5wX9cDYwiEqNpXbF1asmk3LX0z9x/0xUsWrQHQ7Pno94yPj7J/F0W8fa99tNmbULqjZqCUKr0USj1SJKkOj4+BtIK8HSbrJ22tXO2hDVLwHTqZbW9JOjuzNIdeG1bf+zlBa4A3y6KyYyvn2LZu7EP2k0wOv0dFMkCqTZObnBJonEjo5v0DU7H5iBb3GzgPVophlSbTlZPWEzN8+jqTQR+FaZosEkMpFmAGISYWdvhmpM88MQIC/x0JK3J3Nn9WOeZHB8lMJFG5YHMbbWOeHIsZxebNis7q8bpdF3J/dF2hKvqweSdQFpNFbzTTtyrXUmY7nSi/5uUlGcRwIVdWFDHx0WdtH5ACyTWdnOHriqLfAZ554iTFJ9R+9F2b6UcN1fw3maQUT7jSuWQB54Yl6/dvIU1myfwDQvewIten1FYnMu4KzZBbYK3KaR1vvHjOyG9CRNX2WlmxBnvfT2z5m9Pmsat5GCup02GqqrHuUzwqfVE1mc4kzFdzT60q5eQUzCIiGiXI64wte0OfmrHl1ZOvUVLuej5qqDuImfRbsJzB3jT7qWbrZAwCLC1hAceXsbCvXeX0VGrYRS1QVXXRjBbMDN4QUZH63zuhw+x+alVCNU8z+zAuwwCUQsuUfWpiNqMYGubeB9nAZePWbZyC9+On+Yjn784S2f4jqrM6gw71TPOZf2l6vW6rH7ySSiU2iqoE974rlltuoOeDgjnOyiA0lXELjrVo3z+XpC2DU+nF1CrQUde0aU6pUNVxhJQpHeAb33nKg494hD6hqfJ2EgzXw1eWj0ivFecok49URTx6IpNbH78Poyp5bi6A7XgnbQq2/FWxLusFDYr/0G8zeuTm0hZWfnYfax58kmZtd0OuDRGjOBF1KuizovLBKCIoW94Jjf85BI2rVyJmbmwq2FHjva2V4NMDTjRbRyRjkC0u+FF+/UXYoSzFi1ZVUWGQUC3MSbvitWKE3LheAVTKfPUmo287z3/ysc++UF22HUxarIavlbXshzLF+vRYgmV0IjoBBJIVmWJzyovTa4GfctPzwrI1JD1clOX9yLKMX3fJCr1UKj0Ym1CGAQ5HT6HsVRx1kmjUeV3P/4Gv/z+JZi+Ge02ZRn0blAjeajU1V6kPQ+nmO5tIALt4gO9UFZEO6T2igbZGaW7qZGTDnPOt2esuiQH4oRg2iweXLqO0974L+yz9y4MTx9qE3LbQUJX5mC0miLNGpJoe9IYQ6epXyvpn/vW7doEEVRcHrWHqPZyxTcuplQs4DVrvNFyFFrjZFPLulUr2bL2aWRgNkSljgHODG8HVmjFBTkM0m2sp3Rc6aJ0Zr5hO1eevXvBM+3A36ant06kXWFem4boEPVktdJ50kZchhtFIZpGBEOzcEmFe+9/EuJ69plW/N0WZlc3rEKQlQIFJvuYCM5meHj7prvV8JRqZK9BEArAQ5tcXjSwDQwQhp1+cqU+LczeSVRCHGGuaByh0bxrZop1irRIWFlxeB4hZ9U8WZpUcvS0U5fblS5DW3HU8zPC0kWpkGfADJkD7fFpHT+yJYto1XUxpF3Wi6W3RFAow/TZtNiVyfgEJE0ITW6VPRQLRH29WJdVbLuJyQ57t68PKRTyVgvbtHRSlVYopdaKnZjs3HylQNhbyWyjiLjUwsRkZ5E3lSSegKgIlV7CMtikQbJ1a3aBqIgZHMpq7PL8r52YhGbWsIlyGenpyeIEI1P5KCJd8LR5vm7oReCtn0pT7+4w5RBv8UmNobLj3HOOIQgynddqgpc4z0OPr+bXf7wD6wVTKuJTh61OcMTBizj5+ENZuGAO3nseX7GGK395I3fd9ShmaAhNm7zljcexw/azUe/4/s9vZM3GKqZcyZBKndqDVFRVkzrTBivylre/Gu+VKAp48NEV/O5P9xL29eGaic6fPSSnved1OOfac9RZz+qnN3PL3Y+xaeUa5u62gFNPfyUmDFm/aZQf/eovSKkfYwJcvcZxh+3BnrvMB+DOB57k1nueIugbwmnapqmgXa3Onn+R3oWdrik26Sq87uqc5B3iE2jWGB4U+eS5S7bl4LaP226/n5PP+BRbJyYw6vj6F8/mXW86Qbo/+2rgvPeexpf+6wd86NPfEvWWD55xkixevCeA3vzne1izegTT048j6DTey2GSQFTSzRO89c2v40sXndW+9to169jl4NNIvUObDXbfYTc+d/6/TFFgrWPr1lEuuvhbfPcHV/LpD32dSm8/Po350613sG5kHC0UKcskl37+TJk9ZzaAvua0D6KNSegb7LIDrXw5eZLquRsnmufIx0iHIaedyNjnriGZK+hsQnWySmod1Vqd++5/kPsfeIBmM5ZmnMghB+3Dp887Dbv6cb72mffwrjedIGnebmbVqtWsX78eQJIklQ+e9Rb56NmnwtYNTFRrWOuw1kqaNPOkRq5/aXknWaLIpSlBSXjrkldgrZM0sRI3E7abP48jD9oLNzoi4CRpNnDO04wTrVZrbNiwkVq1JoAMDQ3IV7/4EY4/Zn++/F/fwTonJirKsQfvDROb8WObOPKAXZk9Z7am1nHPvQ/yq9/cjOntwdm00zVGW/XRrsuR0ReQExa0w4DuGN02dNXyldWpMUIUBmzdsoXDj30d++57FGeedR6lYkEB9l20C/sevIgz3vI6SZIUI+j7z/mILtr3KPbe5yi+/J/f0EIhIrWWj577DobnDJCmqYZhQBiGmVfSboPAlKZLBo8fG+XQA/Zg8d67SxgGbNy0QdM0AZDTX3esENfAWxUcQWAoFQvc8Ic/sdeiA3nxAcfoFVdcpcZkBYSf+sQHuP3Pf26bmBNecTC4OjRGeeOJR+bNoQL90VXXQewJoqA966ErVYv8TWLu38gJa5e168p3thC/bsG0OxKoEFYQ008QFrXl6NTqNV5xxIsBtFCI9De/u5Gvf/USqtE0tiYl/vX8L7J06XKNwlB7e3t48T670ajXuqPBzg12MbDbFJnGJO94wyvan//Yxy9i9Zo1AHrcyw/X2fOGoDY55WbrjYSRrZalq0b1jHMuYNPGTWoM7LbnHoyMjvHII48qoIcd/GIGBkv0D5c57uWHATA+Ps5Prvk9DEzLeoPT7clNDWKlNYlbbujfnxFrNYjw23STbCXiu1pxiMEDM2fO1Ft+82Puv/c6/uvLnyVJLMbAVT/7Fb29lfapH3r0ccLCNEo9/RSHZ4IPeXzp8vb7Q4O9HRZc3lvbiGLw+Z9DXIqox9YmmLXdMK9+xREArFq1hh9e9h2u/83vAZg2bRonvOJQJB6VIOgCsoKQoNxDedYcqk3lqVWr2wNSiz3X/voGAKZPn87+ey/k0P12Zfr0rOnJr66/kadXbiTs7W/3sWs1W5e8dDdzf72oTztc0YuenwA6SeVtcpzZUnPtICTjbaJBocw+L1rE4sV7Ui4V8MD3/+dn/PfXLsEStQmPey9ahE2aNOtN4q2jROUie+65B3Geu356/aaMd0nW/6dereJHR0nGRrCjW3G1SdSnBFgY28rJxx/C8LQh4tTr5q2jnH322cycNYtmkuH9b3j9a1Ac3lnSfO4kqcU16trYsFmG+0ss2GEH6gnaTD3jtYRfXPsbcv4vJx53OG84+ZXZ73Fw6Y9/CcXevE7A5EBfp7S6K1mVRZTuhdQJq52SE+isr7whR5d1T70SCLJxwyY+e/EXcE5JnHL/Q4/z8APLoTyPP956Lx8HRsYTjj7mCD72qQ/w/ct+RmVaLxdc8Em232FHmtbz1NpN3HvvgxTLFRLQ2MHiPRYINiXqnwZi2DSesHLdKC4KMUXl9FNeTeLRatOz/36L2X+//wRgIoZ6zXHggfszb+FO1Car5BRi7e3tlZ12nivTZ83hYx99H70Dw3hBHn5kGWvXbmTd0/D40uXsvPsunHjyEsIwoAk8+ODj3PLn+5GB2Zmv0y7QkNxxybGZ9kT1z9mfNXzOOExzHdtuS+5anU2nBGmNpkMKng2bx7jkW5cDpSy4KfcSzNoBxHDzrQ9wxVXXcfqS41k3kvDRj3yAM97xZkqlIqWePsbqjmn9ARdd9DnqE+OIhNRjmJhs8vkvfQlBsdYxfajEt753Ne8/97Noocj+i3dm0d57smU8EWdTbr31JtLUIXh22XV3ZsyeTaW/wGuOP5rbbrsTp54tm2N56aGHcctf/kChVCaKQpoOiiF88sLPY30EseOX1/+Bc3ffBVOoZHkL4PKrriWtpkRDZawEnYYiU5ghfio+ZHghKyDnF6rL2QEtXnqnV0RWxW4YGOynUID+oWEqc3ckCXqRqIhXyY2UwwzM4sxzPo21Ka99/YmkwPR509sp5fpEnfM/cjGX//ga6J1DqVKhr4ioKbUZMrgIA4SFIrgESRxnvfuN9Jcj+stw6Y9/yztPfwP0zIbaBk4+9Y389PLv0gTe/Pa3sW7Vk/SEBjdczvS1KWUphhTWrl3DJ87/DL+9/lai2fNJR8f45a9v4CMf/Bf6BkoEIUyMW356zW+RgWl4gpy6Ip2NJCQHLNsqO4dP/PNJyj+6V6sh92QnDee6al3z9jQoRBEj1ZhPfeESggC2bhkj1gLOlBApZgFT7hNLyVBtet525ic57LKfcORRhzJ39hyaScpTK5bzy1/fwMrHn8LMmINPYz7/5W8ya8YQaZJ1RzSSwdeFYoHHlq+CYoGgXNAbb75dbr/rfkKj/O6Pt2o0vLtITy+uMk3/+JeH5V8+8ElEQtKkwZoNW3nvBy7AdzUFd6qsXruOv9x+P5OjDYJZ22HVIAND3Lt0Pe8486OUyxWCIGDNug2s3TiJ9M/Ct2qB6UpDYqbuEtIu4XUTCrDkUeGqv9U7+ogLQm66yMoeH/oqA/POIt2SIISi3RssKOpTcDGa1LJa3qSWAV3DMzM2cRB2eU1eNK0pk2M5KauePWqazaK0BkEfMntuO7ujE+NCXM8S/N2EjyCCcq9Kby+aWti4RqAJpqz0DWZsXoBCBHETaluAIoQRVMpKvdbVQCkfwKgA/YMalHvxasBkgJ46CyObs1pgBYoVzPAsNOoBU8yp6qYNw3c2q9BW2zdLYaigkxv+k9VXnssRR4TcdJP9+1qWxRP3ip/bTk92EhNdULIJMYUKwdydUbWgWY9Pct3YZovZWEOBw499KYUC3HbTHTTiFAkCfLPB/gfszfRZM7npptup1ZsqUUQ4Y6aaLP+Kz3a1UO/B1epCYEQUjQyc+ZUv0bTw3S98SUqR4ZS3von9jn4pP/veFfQUC+x7zFH810WfpzpZhyDADM/MztWilgCCkaxzS4AJI/Hk7WaiiGDujnlj2oym6DTIcg65+tHuGEC7GSR5OavzkNTuA+Cmv8cNvSl3b6prbyYZjyGIMty1i+vYYkCbAA0iLCGOACeFTiFDu1xfUW8pB5a3fugDvPer/85bz3kvdmIUNQZXn+A1b3sL7/ryZxicPpQ10RBDOlknHpsgaSR4CUhjS7kQyvlf/iwnve1N+JERKUYqOxx8NDMOPAo7volXnvRqTvrIexmJhqnFE+y8/wHMO+xoCqUCLk1xYkgm6sRjVdLY4RCsU9JmrC61eO/FVatoXoeGiXAa4ihgpYCTYn5vOXmrhQ7otpnB3AU1QURSi2msuTkb3CP932GEL/JccIHhooueZHjhnxnY7khcw2ftP7pwYJW8+tJkJTsqGSmr3VvddXxi7/E+Yf1YnS2rYN/Xvo6j77ufP175cygEbBir0b85b9SXJCJBnV1334GBoUHWrlnL+lXrVMKIhfOH2OO4Y5msTGPGlZcxUmvwzXPejkpI2aRsv2gRKzc7fnz+OTxx519Y++gjzPzFz9m67mlUQ6Iklt3224NKTw9PLF3ByMbNKr19zJ03nSR1Mjk2xk6Ld2PFU+tJrMtUarsOLN+xg47en7JxE5plMFst+dV5TMlosuE2xh9c+Wy7afx1FfQnDOC1uv4Sqcw8CgkQte0GHB0osVs95+1Z2u6X6SCBeU2Z1QAbJzQSeOU5/8YTjzzE6nvvxEpE7A1J3GSgDO/74sXseNiRWAO2Dtd987/kjmt+xDu/+kOWrrLM2nkx5/ziVr5y+vG8+cIv8PSGrSz/09UsPPYEVq+tcfblv+CKT32KHefP4UWvfSPnn3Qi/d5y9le+zPA++2EtVEerXPnvF8n9f7ie9132PeqJJ4zrDO2ziAtfewrxxnFMVO5URLayYpkw8sLNzD0QvLaclDZRSwKwToi3fDMfVPPXoNG/HgnfdJEDFdbe93OdWLOUsDdUl/pWdKztVKVug/a1WGWtzRKY0sA1CUqsfGoNv//2xbj+Xo7/0KeICspYLWHSQlId58T3n8Pw0UdyxSWX88W3nsrtt9/NIWefxfx9DuCST5yDFEMeeeQxvvvhM2lOjDMeDFHvmcd9f7qB+265FXpKXPqZz3L/738G/XNZ73ux1RFef96/oXvsx8VvOp0PHbQzK5cv56hzPklvf4nNEykyfydWxwV+8Z/fpjk5CUEwhaLYRmBVOqQnzRvvq5+6f4J6R9gbam39w2y+6ZrsSzc9rw0cFE4J4ImY5p4fFTvz5xqUPWnVZFh8qzRT2ptttWp5tWvntCl7tgCTTYeN+rn5+5cwtMuL2fOEV3PQGR+mUa8yUoW+wV4GX3ws992+jj985WNQm6A2spW5+/6e/r2P5s4vn0XNwub1G1j5+59qYfoOTDa9pBqwZeVy1i9bRmnxoTzy2+torFymsUQyMQ7TZg5R2PkA1q6s8ZITTqFwwusJSkPo7D6mL9yVyVpMbX2Vy953Mm7rBDJ3V6TQlyEJJmemSU4abWWcFOk0LdymHCnoVZKGUN/wYSDJxpLnuYMGVzlYErD2qqvVVH7MzEWn4ZoJ6sKuLS207f52F4GotrWjem1jJbVEaViB4gA3/Mcnqey8Lzue+H6kNsL6TRZLxERiaMY2czcpEwQhY3VItEjUP52RGjStAYqoMUwkMNHwSNBLYspM1qE4OIum9Est8QRJRo0ciQ2NNGXlE0+BQvrIMvh5yti6ldSDCvHmUZwVNfN2FQ1L7Wr4ttqBbWiHLYF0be+nHoIoRaKijj3xfUbvuA6WBNlYvpBCba7ycIHR1XefyciyxygOF7JdbGxXpqw1C1wnF6yuvVuddCXSmz6kmQimZ4Dq1jq3fOVjWAkYYwZiQiZHRnjs1t/Ru+t8Dn73x9njyMN5yRkX0gxh1a3X4tKYZgqFGQvZ+eWvlTAMpdqExBdQ9TRSpZ6S0Q4xxC6kZmFs40ZWPXgHwfRBxp56jNW//Raz5syDqML46pXEppeGDZColDP38r1nJGh3i+xsJUF3Tlw7zfkcSGgJBoqMrriPLTe+PzO8V/kXmA/otrJPTOiWh05g6xPriIYLmELa2idsKoFL2/twtmeFycs5xVCtTVKr1/BqMDO2Y82dd3P///wHSJ2x0TE06uH+73+RJ264kTmveAuLL/oxybwD+MvXvsGGu28mjg1Lr7+C8rwd2O2938AUyyT1CWq1SZCANE2ZnGxksUhYoNaIqdfqUOjnzv++kDV338HiD32TYy97lOilp1Ftgin20GxMMDpZQyUUgq4Id0ouy9M2cN1Ecck4TARRStRXYGzFCh1/+ASgluPP+r+wlWG+jHoX7S7TX/RLhhbsgqYJadWgziBBvrnStkSlfEXYGNIJCgVFnSVpxEhUAufQeJJSfy/OeWycoEkCtkHPvAUElT7iLRuIN65DBmZkfNekKpW526PW0dyygcLAIM45bLVK1NOjEoaS1puoqkalgkgQktbraByDj+mZvxNBqZf6+lXYrRuR/ulElRJeQmzskGJfHuWGbaa3SNDe/7BrM8p2s18NehTViNGn7tPxh19Lc/3qqW7g/8pmni1dttNM5u7+TRlceBLFXrD1BNfMXYROmerUmjELPkHjWpbQD/P9XCRrjaZxPS/FinKmm89aytsko4aUe3PVkDcOb1ZzDlEp37HVIGGE+qyRqwRRtu1jq5lIGGUNNbzLkujOQrEHUyxnr9k831ys5NXwLaBtSkVMN8ajiPGERZBSRGMEJldfplv+fDYw8bf0/j+wnW1XMDF8yFuld+bHqczemUIlT9LbrNFcC8YOTFe/OddFefedSJKu7QDbDWGFDv1at2l40bV1rboO7NHexjDfQ3gKX78re9fac7S9laFMHeQWwilMzetm8Kkgocm7dEBcg8bmu3Vy/WeoPnRNl1r3/yc3dBa4QHJB9DJ08KlSHlxCWD6QUv9gtnzlrzDY/BRPQlq9RzvhctdXTLvIr8Mwk2fSJvNECHkLtXYUKnmUStfGnbptEYV07XMgHdJXu9CkwwkVMVns433WdTepbtSkehvxyOWMP/Tz7EsXGLjo7yuL+d/Z0nzbZTZtLgPb70FQWkBYGMj2cXTd01YNKj4jk6hvvecBk3P9RLzJ8g3Ge9+J7kygeNcKQ32HIRBlnSZy4WXMBhUwPu/lDd6rb39P8s9qqzeuGFQwgWbXC8gKEjqLxbfqbfEel2zG1lYy+fQymBh59rH4f+8QOCLMpP//t2NJkP39I5P4H/zyM8+1xMAm+b974Gdq7tsr/zz+efzz+Ofxz+Ofxz9w/D/URkhrkIllFwAAAABJRU5ErkJggg=="
+LOGIN_HTML = LOGIN_HTML.replace("{{LOGO}}", LOGO_B64)
+INDEX_HTML = INDEX_HTML.replace("{{LOGO}}", LOGO_B64)
+
 def json_response(status: int, obj: Any, headers: Optional[List[Tuple[str, str]]] = None) -> Tuple[int, str, bytes, List[Tuple[str, str]]]:
     return status, "application/json", json.dumps(obj, ensure_ascii=False).encode("utf-8"), headers or []
 
@@ -1341,6 +1683,10 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
         events = await pol_get_events()
         classified = classify_items(tasks, events)
         return json_response(200, classified)
+
+    # 2a. Dados completos para o Kanban e o calendário mensal
+    if path == "/api/board":
+        return json_response(200, board_data(await pol_get_tasks(), await pol_get_events()))
 
     # 2b. Envio manual do relatório (sincroniza e manda para todos os canais, ignorando a deduplicação)
     if path == "/api/send-report" and method == "POST":

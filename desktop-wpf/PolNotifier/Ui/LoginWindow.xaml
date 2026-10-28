@@ -5,7 +5,8 @@
         WindowStartupLocation="CenterScreen" Background="{StaticResource Bg0}" Icon="/app.ico">
     <Border Background="{StaticResource Bg1}" CornerRadius="12" Margin="20" Padding="28,24">
         <StackPanel>
-            <TextBlock Text="⚖️ POL ADV" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/>
+            <Image Source="/logo.png" Width="88" Height="88" HorizontalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
+            <TextBlock Text="POL ADV" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
             <TextBlock Text="Entre com sua conta do POL ADV" FontSize="12" Foreground="{StaticResource FgMuted}" HorizontalAlignment="Center" Margin="0,2,0,18"/>
             <TextBlock Text="E-mail" Style="{StaticResource FieldLabel}"/>
             <TextBox x:Name="TxtEmail"/>
