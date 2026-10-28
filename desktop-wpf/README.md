@@ -31,7 +31,7 @@ O início automático também pode ser ligado e desligado em **Configurações �
 Para lançar uma versão, use o `release.ps1` da raiz (cria e envia a próxima tag):
 
 ```powershell
-..\release.ps1                # patch (2.1.2 -> 2.1.3); -Bump minor|major; -DryRun só mostra
+.\release.ps1                # patch (2.1.2 -> 2.1.3); -Bump minor|major; -DryRun só mostra
 ```
 
 ## Dados (compatíveis com a versão Python)
