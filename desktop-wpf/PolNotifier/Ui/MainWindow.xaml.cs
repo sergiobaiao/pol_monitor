@@ -376,6 +376,13 @@ public partial class MainWindow : Window
     // --- Notificações ---
     void OnSaveNotifications(object sender, RoutedEventArgs e)
     {
+        SaveNotificationFields();
+        _db.Log("INFO", "Canais de notificação atualizados.");
+        Alert.Show(this, "Sucesso", "Configurações de notificação salvas com sucesso!");
+    }
+
+    void SaveNotificationFields()
+    {
         _config.EmailEnabled = ChkEmail.IsChecked == true;
         _config.SmtpHost = TxtSmtpHost.Text;
         _config.SmtpPort = int.TryParse(TxtSmtpPort.Text, out var p) ? p : 587;
@@ -390,13 +397,13 @@ public partial class MainWindow : Window
         _config.OpenWaUrl = TxtWaUrl.Text;
         _config.OpenWaApiKey = TxtWaKey.Text;
         _config.OpenWaRecipientsRaw = TxtWaRecipients.Text;
-        _db.Log("INFO", "Canais de notificação atualizados.");
-        Alert.Show(this, "Sucesso", "Configurações de notificação salvas com sucesso!");
     }
 
-    // Os testes usam os destinatários digitados; servidor/token vêm do que está salvo (como no Python)
+    // Testar usa exatamente o que está digitado: salva os campos antes (no Python, servidor/senha
+    // vinham do que estava salvo e o teste falhava com "Authentication Required" sem salvar antes)
     async Task RunTest(Button b, Func<Task<(bool, string)>> send)
     {
+        SaveNotificationFields();
         b.IsEnabled = false;
         try { Alert.Show(this, "Resultado do Teste", (await send()).Item2); }
         finally { b.IsEnabled = true; }
