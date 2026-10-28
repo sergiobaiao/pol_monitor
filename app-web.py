@@ -452,6 +452,13 @@ def parse_date(val: Any) -> Optional[datetime]:
                 return None
     return None
 
+def fmt_deadline(dt: Optional[datetime]) -> str:
+    """Prazos do POL são gravados como "fim do dia" (23:59 local): a hora não significa nada e só a data aparece."""
+    if dt is None:
+        return "Sem prazo definido"
+    end_of_day = (dt.hour, dt.minute) >= (23, 59) or (dt.hour == 0 and dt.minute == 0)
+    return dt.strftime("%d/%m/%Y" if end_of_day else "%d/%m/%Y %H:%M")
+
 def classify_items(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) -> Dict[str, Any]:
     today = datetime.now(TZ).date()
     next_2_days = today + timedelta(days=2)
@@ -473,7 +480,8 @@ def classify_items(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) ->
             "type": "Tarefa",
             "title": t.get("name", "Sem título"),
             "description": t.get("description") or "",
-            "deadline_str": dt.strftime("%d/%m/%Y %H:%M") if dt else "Sem prazo",
+            "deadline_str": fmt_deadline(dt),
+            "deadline": dt.strftime("%Y-%m-%dT%H:%M:%S") if dt else None,
             "priority": t.get("priority", "NORMAL"),
             "days": (dt.date() - today).days if dt else None,
         }
@@ -504,7 +512,8 @@ def classify_items(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) ->
             "type": "Audiência / Agenda",
             "title": ev.get("title", "Sem título"),
             "description": ev.get("location") or ev.get("description") or "",
-            "deadline_str": dt.strftime("%d/%m/%Y %H:%M"),
+            "deadline_str": fmt_deadline(dt),
+            "deadline": dt.strftime("%Y-%m-%dT%H:%M:%S"),
             "priority": "ALTA" if "audiência" in ev.get("title", "").lower() else "NORMAL",
             "days": (item_d - today).days,
         }
@@ -515,6 +524,9 @@ def classify_items(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) ->
         elif next_2_days < item_d <= next_week:
             res["this_week"].append(it)
 
+    # Cada seção em ordem de prazo (sem prazo por último), como no desktop
+    for key in res:
+        res[key].sort(key=lambda i: i["deadline"] or "9999")
     return res
 
 # =============================================================================
@@ -1797,8 +1809,10 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
                 ok, msg = await send_openwa("*⚖️ POL ADV Web — Teste Cloudflare*\nMensagem de teste recebida!")
                 return json_response(200, {"success": ok, "message": msg})
             elif ch == "email":
-                ok, msg = await send_email("🧪 POL ADV — Teste de e-mail", "<p>Teste de notificação por e-mail concluído com sucesso!</p>",
-                                           "Teste de notificação por e-mail concluído com sucesso!")
+                # Como no desktop: o teste manda o relatório real do momento, para conferir o layout que vai chegar
+                classified = classify_items(await pol_get_tasks(), await pol_get_events())
+                plain = format_telegram(classified).replace("*", "").replace("`", "")
+                ok, msg = await send_email("[Teste] " + email_subject(classified), email_html(classified, user_first_name()), plain)
                 return json_response(200, {"success": ok, "message": msg})
             return json_response(400, {"error": "Canal desconhecido"})
         except Exception as e:
@@ -1812,40 +1826,182 @@ def urgency_emoji(days: Optional[int]) -> str:
         return "⚪"
     return "⛔" if days < 0 else "🔴" if days == 0 else "🟠" if days <= 2 else "🟡" if days <= 5 else "🟢"
 
-def format_summary(classified: Dict[str, Any]) -> str:
-    sections = [("🔴 Hoje", "today"), ("🟠 Próximos 2 dias", "tomorrow"), ("🟡 Esta semana", "this_week"), ("⚫ Atrasadas", "overdue")]
-    lines = [f"⚖️ *POL ADV — Prazos {datetime.now(TZ).strftime('%d/%m/%Y')}*"]
-    for title, key in sections:
-        items = classified[key]
-        if not items:
-            continue
-        lines.append(f"\n*{title} ({len(items)})*")
-        for it in items[:10]:
-            lines.append(f"{urgency_emoji(it.get('days'))} {it['deadline_str']} — {it['title']}")
-        if len(items) > 10:
-            lines.append(f"… e mais {len(items) - 10}")
-    return "\n".join(lines)
+PT_WEEKDAYS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]  # segunda = 0
 
-def format_summary_html(classified: Dict[str, Any]) -> str:
-    sections = [("🔴 Hoje", "today", "#ef4444"), ("🟠 Próximos 2 dias", "tomorrow", "#f59e0b"),
-                ("🟡 Esta semana", "this_week", "#eab308"), ("⚫ Atrasadas", "overdue", "#71717a")]
-    parts = [f"<h2 style='font-family:Segoe UI,Arial'>⚖️ POL ADV — Prazos {datetime.now(TZ).strftime('%d/%m/%Y')}</h2>"]
-    for title, key, color in sections:
-        items = classified[key]
-        if not items:
-            continue
-        parts.append(f"<h3 style='font-family:Segoe UI,Arial;color:{color}'>{title} ({len(items)})</h3><ul style='font-family:Segoe UI,Arial'>")
-        parts += [f"<li><b>{html.escape(it['deadline_str'])}</b> — {html.escape(it['title'])} <i>({html.escape(it['type'])})</i></li>" for it in items]
-        parts.append("</ul>")
-    return "".join(parts)
+def _hsl_hex(h: float, sat: float, l: float) -> str:
+    c = (1 - abs(2 * l - 1)) * sat
+    x = c * (1 - abs(h / 60 % 2 - 1))
+    m = l - c / 2
+    r, g, b = (c, x, 0) if h < 60 else (x, c, 0) if h < 120 else (0, c, x)
+    return "#%02x%02x%02x" % (round((r + m) * 255), round((g + m) * 255), round((b + m) * 255))
+
+def _contrast(hexs: str) -> float:
+    def ch(i: int) -> float:
+        v = int(hexs[i:i + 2], 16) / 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 1.05 / (0.2126 * ch(1) + 0.7152 * ch(3) + 0.0722 * ch(5) + 0.05)
+
+def urgency_color(days: Optional[float]) -> str:
+    """Gradiente de urgência: vermelho (hoje) → laranja → amarelo → verde (7+ dias); atrasado vinho; sem prazo cinza.
+    No e-mail (fundo branco) a luminosidade é reduzida até contraste >= 4,6:1."""
+    if days is None:
+        return "#57534e"
+    if days < 0:
+        return "#991b1b"
+    hue = min(max(days, 0), 7) / 7 * 135
+    l = 0.42
+    while _contrast(_hsl_hex(hue, 0.85, l)) < 4.6 and l > 0.05:
+        l -= 0.01
+    return _hsl_hex(hue, 0.85, l)
+
+def email_title() -> str:
+    return f"Publicações Online - Relatório de Tarefas Diário para {datetime.now(TZ).strftime('%d/%m/%Y')}"
+
+def email_subject(c: Dict[str, Any]) -> str:
+    """Assunto = título; com prazo vencendo hoje ganha o prefixo URGENTE."""
+    return ("URGENTE: " if c["today"] else "") + email_title()
+
+def user_first_name() -> str:
+    parts = (STORE["users"].get(CTX["sub"], {}).get("name") or "").split()
+    return parts[0] if parts else ""
+
+def _snippet(text: str, limit: int = 170) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit].rstrip() + "…" if len(text) > limit else text
+
+_INK, _MUTED, _RULE, _PAPER, _DESK = "#1c1917", "#57534e", "#e7e5e4", "#ffffff", "#f5f5f4"
+_SERIF = "Georgia, 'Times New Roman', serif"
+_SANS = "-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+
+def email_html(c: Dict[str, Any], user_name: str = "") -> str:
+    """E-mail do resumo diário / alerta urgente: mesmo layout do desktop (tabelas e estilos inline)."""
+    esc = html.escape
+    today = datetime.now(TZ).date()
+    urgent = bool(c["today"])
+
+    def row(it: Dict[str, Any]) -> str:
+        dt = datetime.fromisoformat(it["deadline"]) if it.get("deadline") else None
+        day = dt.strftime("%d/%m") if dt else "—"
+        weekday = "sem prazo" if dt is None else PT_WEEKDAYS[dt.weekday()] if dt.year == today.year else str(dt.year)
+        meta = "" if it["type"] == "Tarefa" else "Audiência / agenda"
+        if dt and (dt.hour, dt.minute) < (23, 59) and not (dt.hour == 0 and dt.minute == 0):
+            meta = (meta + " · " if meta else "") + dt.strftime("%H:%M")
+        desc = _snippet(it["description"]) if it["description"] else ""
+        tone = urgency_color(it.get("days"))
+        meta_html = f'<div style="font-size:12px;line-height:16px;color:{tone};padding-top:2px;">{esc(meta)}</div>' if meta else ""
+        desc_html = f'<div style="font-size:13px;line-height:19px;color:{_MUTED};padding-top:4px;">{esc(desc)}</div>' if desc else ""
+        return f"""
+<tr>
+  <td valign="top" width="64" style="padding:14px 0;border-top:1px solid {_RULE};font-family:{_SANS};">
+    <div style="font-size:15px;line-height:20px;font-weight:700;color:{tone};font-variant-numeric:tabular-nums;">{day}</div>
+    <div style="font-size:12px;line-height:16px;color:{_MUTED};">{esc(weekday)}</div>
+  </td>
+  <td valign="top" style="padding:14px 0 14px 12px;border-top:1px solid {_RULE};font-family:{_SANS};word-break:break-word;overflow-wrap:anywhere;">
+    <div style="font-size:14px;line-height:20px;font-weight:600;color:{tone};">{esc(it["title"].strip())}</div>
+    {meta_html}
+    {desc_html}
+  </td>
+</tr>"""
+
+    def section(title: str, color: str, items: List[Dict[str, Any]], limit: Optional[int] = None, empty: Optional[str] = None) -> str:
+        if not items and empty is None:
+            return ""
+        shown = items if limit is None else items[:limit]
+        if items:
+            rows = "".join(row(i) for i in shown)
+        else:
+            rows = f'<tr><td colspan="2" style="padding:14px 0;border-top:1px solid {_RULE};font-family:{_SANS};font-size:14px;line-height:20px;color:{_MUTED};">{empty}</td></tr>'
+        more = ""
+        if limit is not None and len(items) > limit:
+            more = (f'<tr><td colspan="2" style="padding:12px 0 0;border-top:1px solid {_RULE};font-family:{_SANS};font-size:13px;color:{_MUTED};">'
+                    f'E mais {len(items) - limit} no <a href="https://office.pol.adv.br/" style="color:{_INK};">POL ADV</a>.</td></tr>')
+        return f"""
+<tr><td style="padding:28px 32px 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td style="padding-bottom:6px;font-family:{_SANS};font-size:13px;line-height:18px;font-weight:700;color:{color};white-space:nowrap;">{title}</td>
+      <td align="right" style="padding-bottom:6px;font-family:{_SANS};font-size:13px;line-height:18px;color:{_MUTED};font-variant-numeric:tabular-nums;">{len(items)}</td>
+    </tr>
+  </table>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    {rows}{more}
+  </table>
+</td></tr>"""
+
+    title = email_title()
+    name = esc(user_name) if user_name.strip() else "Olá"
+    intro = f"{name}, estas são suas tarefas e agenda para os próximos dias."
+    n_today = len(c["today"])
+    preview = f"{n_today} {'item vence' if n_today == 1 else 'itens vencem'} hoje." if n_today else "Nenhuma tarefa/agendamento para hoje."
+    head_color = "#991b1b" if urgent else _INK
+    band = (f'<tr><td style="background:#b91c1c;padding:10px 32px;font-family:{_SANS};font-size:12px;line-height:16px;font-weight:700;'
+            f'letter-spacing:0.08em;color:#ffffff;text-transform:uppercase;">Atenção imediata</td></tr>') if urgent else ""
+    sent = datetime.now(TZ).strftime("%d/%m/%Y às %H:%M")
+
+    return f"""<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{esc(title)}</title></head>
+<body style="margin:0;padding:0;background:{_DESK};">
+  <div style="display:none;max-height:0;overflow:hidden;color:{_DESK};">{esc(preview)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{_DESK};">
+    <tr><td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;background:{_PAPER};border-radius:12px;overflow:hidden;">
+        {band}
+        <tr><td style="padding:28px 32px 0;font-family:{_SERIF};font-size:24px;line-height:31px;font-weight:700;letter-spacing:-0.01em;color:{head_color};">{esc(title)}</td></tr>
+        <tr><td style="padding:12px 32px 0;font-family:{_SANS};font-size:15px;line-height:22px;color:{_INK};">{intro}</td></tr>
+        {section("Hoje", urgency_color(0), c["today"], empty="Nenhuma tarefa/agendamento para hoje.")}
+        {section("Próximos 2 dias", urgency_color(1.5), c["tomorrow"])}
+        {section("Ainda nesta semana", urgency_color(5), c["this_week"])}
+        {section("Atrasados e sem prazo", urgency_color(-1), c["overdue"], limit=10)}
+        <tr><td style="padding:32px 32px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="background:{_INK};border-radius:8px;">
+              <a href="https://office.pol.adv.br/" style="display:inline-block;padding:12px 20px;font-family:{_SANS};font-size:14px;line-height:18px;font-weight:600;color:#ffffff;text-decoration:none;">Abrir o POL ADV</a>
+            </td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="padding:28px 32px;font-family:{_SANS};font-size:12px;line-height:18px;color:{_MUTED};">
+          Enviado pelo POL ADV Notifier em {sent}. Você recebe este resumo porque ativou as notificações por e-mail no app.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+def _message_lines(c: Dict[str, Any], line, overdue_title: str, more_text: str, footer: str, title: str) -> str:
+    out = [title + "\n"]
+    for header, key in (("🚨 VENCENDO HOJE:", "today"), ("⚠️ AMANHÃ / PRÓXIMOS 2 DIAS:", "tomorrow"), ("📅 ESTA SEMANA:", "this_week")):
+        if c[key]:
+            out += [f"*{header}*"] + [line(i) for i in c[key]] + [""]
+    if c["overdue"]:
+        out.append(f"*{overdue_title}*")
+        out += [line(i) for i in c["overdue"][:10]]  # limitar para não estourar a mensagem
+        if len(c["overdue"]) > 10:
+            out.append(f"_...e mais {len(c['overdue']) - 10} {more_text}_")
+        out.append("")
+    out.append(footer)
+    return "\n".join(out)
+
+def _agenda_tag(it: Dict[str, Any]) -> str:
+    return "" if it["type"] == "Tarefa" else "*[Agenda]* "
+
+def format_telegram(c: Dict[str, Any]) -> str:
+    return _message_lines(c, lambda i: f"{urgency_emoji(i.get('days'))} `{i['deadline_str']}` — {_agenda_tag(i)}{i['title']}",
+                          "⏳ ATRASADAS / PENDENTES:", "tarefas atrasadas", "🔗 [Acessar POL ADV](https://office.pol.adv.br)",
+                          "⚖️ *POL ADV — Resumo de Prazos*")
+
+def format_openwa(c: Dict[str, Any]) -> str:
+    return _message_lines(c, lambda i: f"{urgency_emoji(i.get('days'))} *{i['deadline_str']}* — {_agenda_tag(i)}{i['title']}",
+                          "⏳ TAREFAS ATRASADAS / PENDENTES:", "tarefas", "Acesse: https://office.pol.adv.br",
+                          "*⚖️ POL ADV — Resumo de Prazos*")
 
 async def send_report(classified: Dict[str, Any]) -> List[Tuple[str, bool, str]]:
-    """Envia o resumo para todos os canais configurados do usuário em CTX. Devolve (canal, ok, mensagem)."""
-    text = format_summary(classified)
-    results = [("Telegram", *await send_telegram(text)), ("WhatsApp", *await send_openwa(text))]
+    """Envia o resumo para todos os canais configurados do usuário em CTX (mesmas mensagens do desktop).
+    Devolve (canal, ok, mensagem)."""
+    results = [("Telegram", *await send_telegram(format_telegram(classified))),
+               ("WhatsApp", *await send_openwa(format_openwa(classified)))]
     if user_cfg().get("email_enabled"):
-        results.append(("E-mail", *await send_email(f"⚖️ POL ADV: Prazos e Tarefas — {datetime.now(TZ).strftime('%d/%m/%Y')}",
-                                                     format_summary_html(classified), text.replace("*", ""))))
+        plain = format_telegram(classified).replace("*", "").replace("`", "")
+        results.append(("E-mail", *await send_email(email_subject(classified), email_html(classified, user_first_name()), plain)))
     return results
 
 async def run_cron() -> bool:

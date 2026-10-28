@@ -17,6 +17,8 @@ O projeto é composto por:
 2. **Swagger UI & Proxy Local**: Servidor local em `http://127.0.0.1:8000` (`server.py`) com especificações OpenAPI 3.0 consolidadas das 476 rotas da API do POL ADV e proxy CORS reverso.
 3. **Web Edition & Cloudflare Workers**: Aplicação web (`app-web.py`) com SPA embutida, execução local ou Python Worker (Pyodide) em `https://pol-adv-web.victorlimapge.workers.dev`, com persistência no KV `POL_STORE` e e-mail por OAuth (Gmail API) **ou** senha de app do Google (SMTP; no Worker via RPC para o Worker JavaScript auxiliar `pol-adv-smtp`, em `smtp-worker/`, porque o Python Worker ainda não faz TLS em sockets). Independente do desktop: regra de negócio corrigida num lado deve ser replicada no outro. A web também tem Tarefas (Lista/Kanban) e Calendário (Mês/Lista) com popup de detalhes, alimentados por `GET /api/board`.
 
+**Paridade das mensagens:** o formatador (e-mail HTML, Telegram, WhatsApp, assunto, gradiente de urgência, prazo "fim do dia") existe em C# (`Formatter.cs`) e em Python (`app-web.py`: `email_html`, `format_telegram`, `format_openwa`, `email_subject`, `urgency_color`, `fmt_deadline`) e precisa produzir texto idêntico. Ao mexer num, replique no outro e compare as saídas sobre os mesmos dados (só diferem na codificação de entidades HTML e no horário "Enviado em").
+
 **Identidade visual:** logo em `assets/app-icon-original.png` (fundo transparente). Derivados: `desktop-wpf/PolNotifier/app.ico` (exe, janelas, bandeja, instalador NSIS), `desktop-wpf/PolNotifier/logo.png` (telas do desktop) e `LOGO_B64` em `app-web.py` (96 px, favicon e cabeçalho). Para trocar a logo, regenerar os três a partir do original.
 4. **CI/CD e releases** (`.github/workflows/`, `release.ps1`, instalador NSIS): ver seção 7.
 
