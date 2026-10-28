@@ -91,57 +91,142 @@ public static class Formatter
                               start, Fmt(start));
             Place(it, start.Date, overdueAllowed: false); // eventos passados não contam como atrasados
         }
+        // Cada seção em ordem de prazo (sem prazo por último)
+        foreach (var list in new[] { c.Today, c.Tomorrow, c.ThisWeek, c.Overdue })
+            list.Sort((a, b) => (a.Deadline ?? DateTime.MaxValue).CompareTo(b.Deadline ?? DateTime.MaxValue));
         return c;
     }
 
     static string H(string s) => WebUtility.HtmlEncode(s);
 
-    public static string ToHtml(ClassifiedItems c, string userName = "Prezado(a)")
+    /// <summary>Urgente = há prazo vencendo hoje; senão é o resumo diário.</summary>
+    public static bool IsUrgent(ClassifiedItems c) => c.Today.Count > 0;
+
+    public static string EmailSubject(ClassifiedItems c)
     {
-        string Section(string title, List<Item> items, string bg, string border, string badge)
+        var day = DateTime.Today.ToString("dd/MM", Br);
+        if (IsUrgent(c))
+            return $"URGENTE: {Plural(c.Today.Count, "prazo vence", "prazos vencem")} hoje — POL ADV {day}";
+        var next = c.Tomorrow.Count + c.ThisWeek.Count;
+        return next > 0 ? $"Prazos da semana: {Plural(next, "item", "itens")} — POL ADV {day}" : $"Resumo de prazos — POL ADV {day}";
+    }
+
+    static string Plural(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
+
+    static string Snippet(string s, int max = 170)
+    {
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+        return s.Length > max ? s[..max].TrimEnd() + "…" : s;
+    }
+
+    // Paleta do e-mail: papel claro, tinta quase preta e uma cor por seção (texto escuro o bastante
+    // para 4.5:1 sobre branco). Tabelas e estilos inline porque Gmail/Outlook ignoram <style> e flex.
+    const string Ink = "#1c1917", Muted = "#57534e", Rule = "#e7e5e4", Paper = "#ffffff", Desk = "#f5f5f4";
+    const string Serif = "Georgia, 'Times New Roman', serif";
+    const string Sans = "-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+    /// <summary>E-mail do resumo diário / alerta urgente.</summary>
+    public static string ToHtml(ClassifiedItems c, string userName = "")
+    {
+        var today = DateTime.Today;
+        var longDate = today.ToString("dddd, d 'de' MMMM 'de' yyyy", Br);
+        longDate = char.ToUpper(longDate[0]) + longDate[1..];
+        var urgent = IsUrgent(c);
+
+        string Row(Item it)
+        {
+            var d = it.Deadline;
+            var day = d?.ToString("dd/MM", Br) ?? "—";
+            // Dia da semana para o ano corrente; de outro ano, o ano (atrasados antigos)
+            var weekday = d is not { } w ? "sem prazo" : w.Year == today.Year ? w.ToString("ddd", Br).TrimEnd('.') : w.Year.ToString();
+            var meta = it.IsTask ? "" : "Audiência / agenda";
+            if (d is { } t && t.TimeOfDay < new TimeSpan(23, 59, 0) && t.TimeOfDay != TimeSpan.Zero)
+                meta = (meta == "" ? "" : meta + " · ") + t.ToString("HH:mm", Br);
+            var desc = it.Description != "" ? Snippet(it.Description) : "";
+            var metaHtml = meta != "" ? $"<div style=\"font-size:12px;line-height:16px;color:#1d4ed8;padding-top:2px;\">{H(meta)}</div>" : "";
+            var descHtml = desc != "" ? $"<div style=\"font-size:13px;line-height:19px;color:{Muted};padding-top:4px;\">{H(desc)}</div>" : "";
+            return $"""
+                <tr>
+                  <td valign="top" width="64" style="padding:14px 0;border-top:1px solid {Rule};font-family:{Sans};">
+                    <div style="font-size:15px;line-height:20px;font-weight:700;color:{Ink};font-variant-numeric:tabular-nums;">{day}</div>
+                    <div style="font-size:12px;line-height:16px;color:{Muted};">{H(weekday)}</div>
+                  </td>
+                  <td valign="top" style="padding:14px 0 14px 12px;border-top:1px solid {Rule};font-family:{Sans};word-break:break-word;overflow-wrap:anywhere;">
+                    <div style="font-size:14px;line-height:20px;font-weight:600;color:{Ink};">{H(it.Title.Trim())}</div>
+                    {metaHtml}
+                    {descHtml}
+                  </td>
+                </tr>
+                """;
+        }
+
+        string Section(string title, string color, List<Item> items, int limit = int.MaxValue)
         {
             if (items.Count == 0) return "";
-            var sb = new StringBuilder($"""
-                <div style="margin-bottom: 24px; border: 1px solid {border}; border-radius: 8px; overflow: hidden; background: #ffffff;">
-                    <div style="background: {bg}; color: #ffffff; padding: 10px 16px; font-weight: bold; font-size: 15px;">
-                        <span>{title}</span>
-                        <span style="background: rgba(255,255,255,0.25); padding: 2px 8px; border-radius: 12px; font-size: 12px;">{items.Count} {badge}</span>
-                    </div>
-                    <div style="padding: 12px 16px;">
-                """);
-            foreach (var it in items)
-            {
-                var desc = it.Description != "" ? $"<div style='font-size: 12px; color: #6b7280; margin-top: 4px;'>{H(it.Description)}</div>" : "";
-                sb.Append($"""
-                    <div style="padding: 10px 0; border-bottom: 1px solid #f3f4f6;">
-                        <span style="font-weight: 600; color: #111827; font-size: 14px;">[{H(it.Type)}] {H(it.Title)}</span>
-                        <span style="font-size: 12px; color: #4b5563; white-space: nowrap; font-weight: bold;"> 📅 {it.DeadlineStr}</span>
-                        {desc}
-                    </div>
-                    """);
-            }
-            sb.Append("</div></div>");
-            return sb.ToString();
+            var rows = string.Concat(items.Take(limit).Select(Row));
+            var more = items.Count > limit
+                ? $"<tr><td colspan=\"2\" style=\"padding:12px 0 0;border-top:1px solid {Rule};font-family:{Sans};font-size:13px;color:{Muted};\">E mais {items.Count - limit} no <a href=\"https://office.pol.adv.br/\" style=\"color:{Ink};\">POL ADV</a>.</td></tr>"
+                : "";
+            return $"""
+                <tr><td style="padding:28px 32px 0;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td style="padding-bottom:6px;font-family:{Sans};font-size:13px;line-height:18px;font-weight:700;color:{color};white-space:nowrap;">{title}</td>
+                      <td align="right" style="padding-bottom:6px;font-family:{Sans};font-size:13px;line-height:18px;color:{Muted};font-variant-numeric:tabular-nums;">{items.Count}</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    {rows}{more}
+                  </table>
+                </td></tr>
+                """;
         }
+
+        var parts = new List<string>();
+        if (c.Today.Count > 0 && !urgent) parts.Add($"{Plural(c.Today.Count, "vence", "vencem")} hoje"); // no urgente o título já diz
+        if (c.Tomorrow.Count > 0) parts.Add($"{c.Tomorrow.Count} nos próximos 2 dias");
+        if (c.ThisWeek.Count > 0) parts.Add($"{c.ThisWeek.Count} ainda nesta semana");
+        if (c.Overdue.Count > 0) parts.Add(Plural(c.Overdue.Count, "atrasado ou sem prazo", "atrasados ou sem prazo"));
+        var summary = parts.Count == 0 ? "Nenhum prazo pendente." : string.Join(" · ", parts) + ".";
+        var headline = urgent
+            ? Plural(c.Today.Count, "prazo vence hoje", "prazos vencem hoje")
+            : $"Prazos de {today.ToString("d 'de' MMMM", Br)}";
+        var greeting = string.IsNullOrWhiteSpace(userName) ? "" : $"{H(userName)}, ";
+        var headColor = urgent ? "#991b1b" : Ink;
+        var band = urgent
+            ? $"<tr><td style=\"background:#b91c1c;padding:10px 32px;font-family:{Sans};font-size:12px;line-height:16px;font-weight:700;letter-spacing:0.08em;color:#ffffff;text-transform:uppercase;\">Atenção imediata</td></tr>"
+            : "";
+        var sent = DateTime.Now.ToString("dd/MM/yyyy 'às' HH:mm", Br);
 
         return $"""
             <!DOCTYPE html>
-            <html><head><meta charset="utf-8"></head>
-            <body style="font-family: 'Segoe UI', Roboto, Arial, sans-serif; background: #f9fafb; margin: 0; padding: 20px;">
-              <div style="max-width: 680px; margin: 0 auto; background: #ffffff; border-radius: 10px; border: 1px solid #e5e7eb; padding: 24px;">
-                <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 20px;">
-                  <h1 style="margin: 0; font-size: 20px; color: #1e3a8a;">⚖️ POL ADV — Relatório de Prazos &amp; Compromissos</h1>
-                  <p style="margin: 4px 0 0 0; font-size: 13px; color: #6b7280;">Olá, {H(userName)}! Segue o monitoramento atualizado em <strong>{DateTime.Today:dd/MM/yyyy}</strong>.</p>
-                </div>
-                {Section("🚨 VENCENDO HOJE", c.Today, "#dc2626", "#fca5a5", "urgente(s)")}
-                {Section("⚠️ VENCENDO AMANHÃ / PRÓXIMOS 2 DIAS", c.Tomorrow, "#d97706", "#fcd34d", "item(ns)")}
-                {Section("📅 VENCENDO ESTA SEMANA", c.ThisWeek, "#2563eb", "#bfdbfe", "item(ns)")}
-                {Section("⏳ TAREFAS ATRASADAS / PENDENTES", c.Overdue, "#4b5563", "#d1d5db", "atrasada(s)")}
-                <div style="text-align: center; margin-top: 30px; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 12px;">
-                  Notificação automática gerada pelo <strong>POL ADV Desktop Notifier</strong>.<br>
-                  Para gerenciar seus prazos, acesse <a href="https://office.pol.adv.br/" style="color: #2563eb;">office.pol.adv.br</a>
-                </div>
-              </div>
+            <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{H(headline)}</title></head>
+            <body style="margin:0;padding:0;background:{Desk};">
+              <div style="display:none;max-height:0;overflow:hidden;color:{Desk};">{H(summary)}</div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{Desk};">
+                <tr><td align="center" style="padding:24px 12px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;background:{Paper};border-radius:12px;overflow:hidden;">
+                    {band}
+                    <tr><td style="padding:28px 32px 0;font-family:{Sans};font-size:13px;line-height:18px;color:{Muted};">{H(longDate)}</td></tr>
+                    <tr><td style="padding:6px 32px 0;font-family:{Serif};font-size:28px;line-height:34px;font-weight:700;letter-spacing:-0.01em;color:{headColor};">{H(headline)}</td></tr>
+                    <tr><td style="padding:10px 32px 0;font-family:{Sans};font-size:15px;line-height:22px;color:{Ink};">{greeting}{H(summary)}</td></tr>
+                    {Section("Vence hoje", "#b91c1c", c.Today)}
+                    {Section("Próximos 2 dias", "#b45309", c.Tomorrow)}
+                    {Section("Ainda nesta semana", "#1d4ed8", c.ThisWeek)}
+                    {Section("Atrasados e sem prazo", Muted, c.Overdue, limit: 10)}
+                    <tr><td style="padding:32px 32px 0;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                        <td style="background:{Ink};border-radius:8px;">
+                          <a href="https://office.pol.adv.br/" style="display:inline-block;padding:12px 20px;font-family:{Sans};font-size:14px;line-height:18px;font-weight:600;color:#ffffff;text-decoration:none;">Abrir o POL ADV</a>
+                        </td>
+                      </tr></table>
+                    </td></tr>
+                    <tr><td style="padding:28px 32px;font-family:{Sans};font-size:12px;line-height:18px;color:{Muted};">
+                      Enviado pelo POL ADV Notifier em {sent}. Você recebe este resumo porque ativou as notificações por e-mail no app.
+                    </td></tr>
+                  </table>
+                </td></tr>
+              </table>
             </body></html>
             """;
     }

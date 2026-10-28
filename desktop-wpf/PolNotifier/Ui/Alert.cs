@@ -7,11 +7,12 @@ namespace PolNotifier.Ui;
 /// <summary>Modal informativo simples (equivalente ao ModernAlert do Python).</summary>
 public static class Alert
 {
-    public static void Show(Window? owner, string title, string message, bool isError = false)
+    public static void Show(Window? owner, string title, string message, bool isError = false, bool isWarning = false)
     {
         var low = (title + " " + message).ToLowerInvariant();
-        var (icon, color) = isError || title.ToLowerInvariant().Contains("erro") || message.ToLowerInvariant().Contains("falha")
+        var (icon, color) = isError || title.ToLowerInvariant().Contains("erro")
             ? ("❌", "#ef4444")
+            : isWarning ? ("⚠️", "#f59e0b")
             : low.Contains("sucesso") ? ("✅", "#10b981") : ("ℹ️", "#3b82f6");
 
         var ok = new Button

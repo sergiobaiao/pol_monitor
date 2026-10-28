@@ -52,7 +52,13 @@ public sealed class Notifiers(Config config)
             {
                 var resp = await send(t);
                 if (resp.IsSuccessStatusCode) ok++;
-                else errors.Add($"{what}{t}: HTTP {(int)resp.StatusCode} - {await resp.Content.ReadAsStringAsync()}");
+                else
+                {
+                    var body = await resp.Content.ReadAsStringAsync();
+                    // Telegram: o bot só fala com quem já mandou /start para ele (ou o ID está errado)
+                    var hint = body.Contains("chat not found") ? " (essa pessoa precisa abrir o bot e enviar /start; confira o ID)" : "";
+                    errors.Add($"{what}{t}: HTTP {(int)resp.StatusCode} - {body}{hint}");
+                }
             }
             catch (Exception e) { errors.Add($"{what}{t}: {e.Message}"); }
         }
@@ -77,7 +83,7 @@ public sealed class Notifiers(Config config)
             {
                 ["chat_id"] = chat, ["text"] = text, ["parse_mode"] = "Markdown", ["disable_web_page_preview"] = true,
             }), "Telegram", "Chat ", "Mensagem enviada com sucesso para {0} chat(s)!",
-            "Enviado para {0} chats, com falhas em: {1}");
+            "Enviado para {0} chat(s), com falhas em: {1}");
     }
 
     public Task<(bool, string)> SendOpenWa(string text, List<string>? recipients = null)
@@ -102,6 +108,6 @@ public sealed class Notifiers(Config config)
             }
             return Http.SendAsync(req);
         }, "OpenWA", "", "Mensagem enviada com sucesso para {0} destinatário(s) no WhatsApp!",
-            "Enviado para {0} destinatários, erros: {1}");
+            "Enviado para {0} destinatários, com falhas em: {1}");
     }
 }

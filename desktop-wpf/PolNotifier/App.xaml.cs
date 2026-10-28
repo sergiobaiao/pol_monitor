@@ -105,7 +105,7 @@ public partial class App : Application
         public Session(App app, Database db, Config config, PolClient pol, string userName)
         {
             Db = db;
-            _scheduler = new Scheduler(config, pol);
+            _scheduler = new Scheduler(config, pol) { UserName = userName };
             _fence = new FenceWindow(config, _scheduler);
             _main = new MainWindow(config, pol, _scheduler, _fence, userName);
             _main.QuitRequested += app.Quit;

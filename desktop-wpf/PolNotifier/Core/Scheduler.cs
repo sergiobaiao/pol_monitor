@@ -15,6 +15,9 @@ public sealed class Scheduler(Config config, PolClient pol)
     public event Action<ClassifiedItems>? SyncCompleted;
     public event Action<string>? StatusChanged;
     public Notifiers Notifiers => _notifiers;
+    /// <summary>Nome do usuário (claim "name" do JWT), usado na saudação do e-mail.</summary>
+    public string UserName { get; set; } = "";
+    public string FirstName => UserName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
 
     public void Start()
     {
@@ -78,8 +81,7 @@ public sealed class Scheduler(Config config, PolClient pol)
                 }
 
                 await Channel(config.EmailEnabled, "EMAIL", config.SmtpRecipients, () => _notifiers.SendEmail(
-                    $"⚖️ POL ADV: Prazos e Tarefas — {DateTime.Today:dd/MM/yyyy}",
-                    Formatter.ToHtml(c, config.PolEmail.Split('@')[0])));
+                    Formatter.EmailSubject(c), Formatter.ToHtml(c, FirstName)));
                 await Channel(config.TelegramEnabled, "TELEGRAM", config.TelegramChatIds,
                     () => _notifiers.SendTelegram(Formatter.ToTelegramMarkdown(c)));
                 await Channel(config.OpenWaEnabled, "OPENWA", config.OpenWaRecipients,

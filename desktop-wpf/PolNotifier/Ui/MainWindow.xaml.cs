@@ -405,7 +405,14 @@ public partial class MainWindow : Window
     {
         SaveNotificationFields();
         b.IsEnabled = false;
-        try { Alert.Show(this, "Resultado do Teste", (await send()).Item2); }
+        try
+        {
+            var (ok, msg) = await send();
+            // Envio parcial (alguns destinatários falharam) é aviso, não erro
+            var partial = ok && msg.Contains("falha", StringComparison.OrdinalIgnoreCase);
+            Alert.Show(this, ok ? (partial ? "Enviado com falhas" : "Teste enviado com sucesso") : "Falha no teste", msg,
+                       isError: !ok, isWarning: partial);
+        }
         finally { b.IsEnabled = true; }
     }
 
@@ -413,8 +420,10 @@ public partial class MainWindow : Window
     {
         var to = Config.SplitList(TxtSmtpRecipients.Text);
         if (to.Count == 0) { Alert.Show(this, "Atenção", "Preencha ao menos um destinatário de e-mail."); return; }
-        await RunTest((Button)sender, () => _scheduler.Notifiers.SendEmail("🧪 Teste de Notificação POL ADV",
-            "<p>Este é um e-mail de teste do POL ADV Desktop Notifier.</p>", to));
+        // O teste manda o relatório real atual, para conferir o layout que vai chegar todo dia
+        var data = _data ?? new ClassifiedItems();
+        await RunTest((Button)sender, () => _scheduler.Notifiers.SendEmail("[Teste] " + Formatter.EmailSubject(data),
+            Formatter.ToHtml(data, _scheduler.FirstName), to));
     }
 
     async void OnTestTelegram(object sender, RoutedEventArgs e)
