@@ -324,35 +324,31 @@ class SmtpError(Exception):
 
 async def smtp_send_rpc(host: str, port: int, user: str, password: str, rcpts: List[str], msg: EmailMessage):
     """No Worker o Python ainda não faz TLS em sockets ("SSL/TLS via create_connection is not yet supported"):
-    o envio vai para o Worker JavaScript `pol-adv-smtp` (smtp-worker/) pelo service binding SMTP, por RPC e,
-    se o RPC falhar, por fetch no mesmo binding. Os erros dizem em que etapa cada caminho falhou."""
+    o envio vai para o Worker JavaScript `pol-adv-smtp` (smtp-worker/) pelo service binding SMTP.
+    Caminho principal: fetch no binding (o wrapper Python aceita 1 argumento posicional + nomeados, como o
+    `fetch` do SDK). O RPC (`binding.send`) falha neste runtime com 'Result should have type object not
+    function', então fica só como reserva. Os erros dizem em que etapa cada caminho falhou."""
     raw = base64.b64encode(msg.as_bytes(policy=email_policy.SMTP)).decode("ascii")
-    # Texto JSON em vez de objeto: sem conversão Python→JS
     payload = json.dumps({"host": host, "port": port, "user": user, "password": password, "from": user, "to": rcpts, "raw": raw})
-    stage = "binding SMTP"
+    binding = getattr(CF_ENV, "SMTP", None) if CF_ENV is not None else None
+    if binding is None:
+        raise RuntimeError("binding SMTP (Worker pol-adv-smtp) não configurado")
     try:
-        binding = getattr(CF_ENV, "SMTP", None) if CF_ENV is not None else None
-        if binding is None:
-            raise RuntimeError("binding SMTP (Worker pol-adv-smtp) não configurado")
-        stage = "RPC send"
+        resp = await binding.fetch("https://smtp.internal/send", method="POST", body=payload)
+        text = await resp.text()
+        if resp.status == 200:
+            return
+        raise SmtpError(f"{resp.status} {text}")  # o Worker auxiliar respondeu: erro do servidor SMTP (ex.: 535)
+    except SmtpError:
+        raise
+    except Exception as e:
+        fetch_err = f"{type(e).__name__} em [fetch no binding]: {e}"
+    log("WARNING", f"SMTP via fetch no binding falhou ({fetch_err}); tentando RPC.")
+    try:
         await binding.send(payload)
         return
     except Exception as e:
-        rpc_err = f"{type(e).__name__} em [{stage}]: {e}"
-    log("WARNING", f"SMTP via RPC falhou ({rpc_err}); tentando fetch no binding.")
-    stage = "fetch no binding"
-    try:
-        from js import Object
-        from pyodide.ffi import to_js
-        init = to_js({"method": "POST", "body": payload}, dict_converter=Object.fromEntries)
-        resp = await binding.fetch("https://smtp.internal/send", init)
-        if resp.status != 200:
-            raise SmtpError(f"{resp.status} {await resp.text()}")
-        return
-    except Exception as e:
-        if isinstance(e, SmtpError):
-            raise  # o servidor SMTP respondeu: erro de verdade (ex.: 535), não problema de binding
-        raise RuntimeError(f"RPC: {rpc_err} | fetch: {type(e).__name__} em [{stage}]: {e}")
+        raise RuntimeError(f"fetch: {fetch_err} | RPC: {type(e).__name__} em [RPC send]: {e}")
 
 def smtp_send_blocking(host: str, port: int, user: str, password: str, msg: EmailMessage, rcpts: List[str]):
     import smtplib
