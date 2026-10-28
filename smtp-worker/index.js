@@ -12,6 +12,19 @@ export class Smtp extends WorkerEntrypoint {
     await sendMail(connect, msg);
     return "ok";
   }
+
+  /** Mesmo envio por HTTP via service binding (alternativa ao RPC): POST /send com o JSON no corpo. */
+  async fetch(request) {
+    if (request.method === "POST" && new URL(request.url).pathname === "/send") {
+      try {
+        await sendMail(connect, await request.json());
+        return new Response("ok");
+      } catch (e) {
+        return new Response(String((e && e.message) || e), { status: 502 });
+      }
+    }
+    return new Response("Not Found", { status: 404 });
+  }
 }
 
 export default {

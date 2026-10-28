@@ -324,13 +324,35 @@ class SmtpError(Exception):
 
 async def smtp_send_rpc(host: str, port: int, user: str, password: str, rcpts: List[str], msg: EmailMessage):
     """No Worker o Python ainda não faz TLS em sockets ("SSL/TLS via create_connection is not yet supported"):
-    o envio vai por RPC (service binding SMTP) para o Worker JavaScript `pol-adv-smtp` (smtp-worker/)."""
-    rpc = getattr(CF_ENV, "SMTP", None) if CF_ENV is not None else None
-    if rpc is None:
-        raise RuntimeError("binding SMTP (Worker pol-adv-smtp) não configurado")
+    o envio vai para o Worker JavaScript `pol-adv-smtp` (smtp-worker/) pelo service binding SMTP, por RPC e,
+    se o RPC falhar, por fetch no mesmo binding. Os erros dizem em que etapa cada caminho falhou."""
     raw = base64.b64encode(msg.as_bytes(policy=email_policy.SMTP)).decode("ascii")
-    # Texto JSON em vez de objeto: sem conversão Python→JS (to_js falhou em produção)
-    await rpc.send(json.dumps({"host": host, "port": port, "user": user, "password": password, "from": user, "to": rcpts, "raw": raw}))
+    # Texto JSON em vez de objeto: sem conversão Python→JS
+    payload = json.dumps({"host": host, "port": port, "user": user, "password": password, "from": user, "to": rcpts, "raw": raw})
+    stage = "binding SMTP"
+    try:
+        binding = getattr(CF_ENV, "SMTP", None) if CF_ENV is not None else None
+        if binding is None:
+            raise RuntimeError("binding SMTP (Worker pol-adv-smtp) não configurado")
+        stage = "RPC send"
+        await binding.send(payload)
+        return
+    except Exception as e:
+        rpc_err = f"{type(e).__name__} em [{stage}]: {e}"
+    log("WARNING", f"SMTP via RPC falhou ({rpc_err}); tentando fetch no binding.")
+    stage = "fetch no binding"
+    try:
+        from js import Object
+        from pyodide.ffi import to_js
+        init = to_js({"method": "POST", "body": payload}, dict_converter=Object.fromEntries)
+        resp = await binding.fetch("https://smtp.internal/send", init)
+        if resp.status != 200:
+            raise SmtpError(f"{resp.status} {await resp.text()}")
+        return
+    except Exception as e:
+        if isinstance(e, SmtpError):
+            raise  # o servidor SMTP respondeu: erro de verdade (ex.: 535), não problema de binding
+        raise RuntimeError(f"RPC: {rpc_err} | fetch: {type(e).__name__} em [{stage}]: {e}")
 
 def smtp_send_blocking(host: str, port: int, user: str, password: str, msg: EmailMessage, rcpts: List[str]):
     import smtplib
@@ -371,7 +393,7 @@ async def send_email_smtp(subject: str, html_body: str, text_body: str) -> Tuple
         log("ERROR", f"SMTP {host}:{port}: {err[:200]}")
         if "535" in err or "Authentication" in err:
             return False, "E-mail: o Google recusou o usuário ou a senha de app. Gere uma nova em myaccount.google.com/apppasswords (precisa da verificação em duas etapas)."
-        return False, f"E-mail: falha no envio SMTP ({err[:160]})."
+        return False, f"E-mail: falha no envio SMTP ({err[:700]})."
     log("INFO", f"E-mail enviado via SMTP para {len(recipients)} destinatário(s).")
     return True, f"E-mail enviado para {', '.join(recipients)}!"
 
