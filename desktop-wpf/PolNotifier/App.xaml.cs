@@ -129,6 +129,7 @@ public partial class App : Application
             menu.Items.Add("Abrir Painel POL ADV", null, (_, _) => ui.BeginInvoke(_main.ShowFromTray)).Font =
                 new System.Drawing.Font(menu.Font, System.Drawing.FontStyle.Bold);
             menu.Items.Add("Sincronizar Prazos Agora", null, (_, _) => _ = _scheduler.SyncAndNotify(force: true));
+            menu.Items.Add("📨 Enviar Último Relatório", null, (_, _) => ui.BeginInvoke(_main.SendReport));
             menu.Items.Add("🖥️ Exibir/Ocultar Widget Desktop", null, (_, _) => ui.BeginInvoke(() =>
             {
                 if (_fence.IsVisible) _fence.HideWidget(); else _fence.ShowWidget();

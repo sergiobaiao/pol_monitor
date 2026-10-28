@@ -34,11 +34,13 @@
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="24,12" VerticalAlignment="Center">
                     <TextBlock x:Name="LblStatus" Text="🟢 Pronto" FontSize="12" Foreground="#10b981" VerticalAlignment="Center" Margin="0,0,16,0"/>
                     <Button x:Name="BtnFence" Content="🖥️ Widget Desktop" Style="{StaticResource FlatButton}" Background="#27272a" Margin="0,0,10,0" Click="OnToggleFence"/>
+                    <Button x:Name="BtnReport" Content="📨 Relatório" Style="{StaticResource FlatButton}" Background="#27272a" Margin="0,0,10,0" Click="OnSendReport"
+                            ToolTip="Reenvia agora o último relatório por e-mail, Telegram e WhatsApp (canais ativos)"/>
                     <Button x:Name="BtnSync" Content="🔄 Sincronizar Agora" Style="{StaticResource AccentButton}" Click="OnSyncNow"/>
                 </StackPanel>
                 <StackPanel Margin="24,12">
                     <TextBlock x:Name="LblGreeting" FontSize="20" FontWeight="Bold" Foreground="{StaticResource Fg}"/>
-                    <TextBlock x:Name="LblSubtitle" FontSize="12" Foreground="{StaticResource FgMuted}"/>
+                    <TextBlock x:Name="LblSubtitle" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="{StaticResource FgMuted}"/>
                 </StackPanel>
             </DockPanel>
 

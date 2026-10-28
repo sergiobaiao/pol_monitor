@@ -496,6 +496,9 @@ public partial class MainWindow : Window
         _ = Task.Run(() => _scheduler.SyncAndNotify(force: true));
     }
 
+    /// <summary>Atalho para o menu da bandeja (mesmo botão da barra superior).</summary>
+    public void SendReport() => OnSendReport(BtnReport, new RoutedEventArgs());
+
     async void OnSendReport(object sender, RoutedEventArgs e)
     {
         var b = (Button)sender;
