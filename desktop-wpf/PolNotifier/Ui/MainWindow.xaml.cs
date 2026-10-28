@@ -261,6 +261,25 @@ public partial class MainWindow : Window
         _ = Task.Run(() => _scheduler.SyncAndNotify(force: true));
     }
 
+    async void OnSendReport(object sender, RoutedEventArgs e)
+    {
+        var b = (Button)sender;
+        b.IsEnabled = false;
+        try
+        {
+            var results = await Task.Run(_scheduler.SendLastReport);
+            var sent = results.Where(r => !r.EndsWith(": desativado")).ToList();
+            if (sent.Count == 0)
+                Alert.Show(this, "Nenhum canal ativo", "Ative ao menos um canal na aba Notificações para enviar o relatório.", isWarning: true);
+            else
+            {
+                var failed = sent.Any(r => r.Contains("falha", StringComparison.OrdinalIgnoreCase) || r.Contains("Nenhum", StringComparison.Ordinal));
+                Alert.Show(this, failed ? "Relatório enviado com falhas" : "Relatório enviado com sucesso", string.Join(Environment.NewLine, results), isWarning: failed);
+            }
+        }
+        finally { b.IsEnabled = true; }
+    }
+
     // --- Widget ---
     void OnToggleFence(object sender, RoutedEventArgs e)
     {

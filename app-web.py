@@ -768,7 +768,8 @@ INDEX_HTML = """<!DOCTYPE html>
               <input type="number" id="cfg-pol-interval" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
             </div>
           </div>
-          <div class="flex justify-end pt-2">
+          <div class="flex justify-between gap-2 pt-2">
+            <button onclick="sendReport()" id="btn-send-report" title="Sincroniza e envia agora o relatório para todos os canais configurados" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold px-4 py-2 rounded-lg transition">📨 Enviar relatório agora</button>
             <button onclick="saveConfig()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">Salvar Configurações</button>
           </div>
         </div>
@@ -994,6 +995,20 @@ INDEX_HTML = """<!DOCTYPE html>
       alert('Configurações salvas com sucesso!');
     }
 
+    async function sendReport() {
+      const btn = document.getElementById('btn-send-report');
+      btn.disabled = true; btn.textContent = '⏳ Enviando...';
+      try {
+        const res = await fetch('/api/send-report', { method: 'POST' });
+        const data = await res.json();
+        alert((data.results || []).map(r => (r.success ? '✅ ' : '⚠️ ') + r.message).join('\\n') || (data.error || 'Nada enviado.'));
+      } catch (e) {
+        alert('Falha ao enviar o relatório: ' + e);
+      } finally {
+        btn.disabled = false; btn.textContent = '📨 Enviar relatório agora';
+      }
+    }
+
     async function testChannel(channel) {
       const res = await fetch('/api/test-channel', {
         method: 'POST',
@@ -1161,6 +1176,13 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
         classified = classify_items(tasks, events)
         return json_response(200, classified)
 
+    # 2b. Envio manual do relatório (sincroniza e manda para todos os canais, ignorando a deduplicação)
+    if path == "/api/send-report" and method == "POST":
+        classified = classify_items(await pol_get_tasks(), await pol_get_events())
+        results = await send_report(classified)
+        log("INFO", "Envio manual do relatório: " + "; ".join(f"{ch}: {'ok' if ok else 'falha'}" for ch, ok, _ in results))
+        return json_response(200, {"results": [{"channel": ch, "success": ok, "message": msg} for ch, ok, msg in results]})
+
     # 3. Configurações (só as chaves conhecidas; credenciais nunca passam por aqui)
     if path == "/api/config":
         if method == "POST":
@@ -1256,6 +1278,15 @@ def format_summary_html(classified: Dict[str, Any]) -> str:
         parts.append("</ul>")
     return "".join(parts)
 
+async def send_report(classified: Dict[str, Any]) -> List[Tuple[str, bool, str]]:
+    """Envia o resumo para todos os canais configurados do usuário em CTX. Devolve (canal, ok, mensagem)."""
+    text = format_summary(classified)
+    results = [("Telegram", *await send_telegram(text)), ("WhatsApp", *await send_openwa(text))]
+    if user_cfg().get("email_enabled"):
+        results.append(("E-mail", *await send_email(f"⚖️ POL ADV: Prazos e Tarefas — {datetime.now(TZ).strftime('%d/%m/%Y')}",
+                                                     format_summary_html(classified), text.replace("*", ""))))
+    return results
+
 async def run_cron() -> bool:
     """Monitor 24h: sincroniza cada usuário que marcou "Lembrar" (tem refresh token salvo)
     quando vence o intervalo dele e notifica se houver item ainda não avisado hoje.
@@ -1282,14 +1313,7 @@ async def run_cron() -> bool:
         sent_ids = set(notified.get("ids", [])) if notified.get("date") == today else set()
         if not ids - sent_ids:
             continue
-        text = format_summary(classified)
-        ok_tg, _ = await send_telegram(text)
-        ok_wa, _ = await send_openwa(text)
-        ok_mail = False
-        if user["config"].get("email_enabled"):
-            ok_mail, _ = await send_email(f"⚖️ POL ADV: Prazos e Tarefas — {datetime.now(TZ).strftime('%d/%m/%Y')}",
-                                          format_summary_html(classified), text.replace("*", ""))
-        if ok_tg or ok_wa or ok_mail:
+        if any(ok for _, ok, _ in await send_report(classified)):
             user["notified"] = {"date": today, "ids": sorted(sent_ids | ids)}
             log("INFO", f"Monitor: resumo enviado ({len(ids - sent_ids)} item(ns) novo(s)).")
     CTX["sub"], CTX["auth"] = None, None

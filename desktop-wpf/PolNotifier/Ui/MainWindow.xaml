@@ -190,7 +190,11 @@
                                 </StackPanel>
                                 <DockPanel Margin="0,14,0,0">
                                     <Button DockPanel.Dock="Right" Content="💾 Salvar Período de Atualização" Style="{StaticResource AccentButton}" Click="OnSaveInterval"/>
-                                    <Button Content="🔄 Sincronizar Agora" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="OnManualSync"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="🔄 Sincronizar Agora" Style="{StaticResource FlatButton}" Click="OnManualSync"/>
+                                        <Button Content="📨 Enviar último relatório" Style="{StaticResource FlatButton}" Margin="8,0,0,0" Click="OnSendReport"
+                                                ToolTip="Reenvia agora o último relatório para todos os canais ativos (e-mail, Telegram, WhatsApp)"/>
+                                    </StackPanel>
                                 </DockPanel>
                             </StackPanel>
                         </Border>
