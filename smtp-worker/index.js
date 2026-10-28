@@ -5,8 +5,10 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { sendMail } from "./smtp.js";
 
 export class Smtp extends WorkerEntrypoint {
-  /** @param {{host:string, port:number, user:string, password:string, from:string, to:string[], raw:string}} msg */
-  async send(msg) {
+  /** @param {string|object} arg JSON {host, port, user, password, from, to[], raw(base64)}. O Python manda texto JSON:
+   *  evita a conversão de objetos Python→JS (to_js), que falhou com "Result should have type object not function". */
+  async send(arg) {
+    const msg = typeof arg === "string" ? JSON.parse(arg) : arg;
     await sendMail(connect, msg);
     return "ok";
   }

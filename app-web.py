@@ -109,7 +109,9 @@ def log(level: str, msg: str):
 async def http_request(url: str, method: str = "GET", headers: Optional[Dict[str, str]] = None, data: Optional[bytes] = None) -> Tuple[int, Dict[str, Any], bytes]:
     req_headers = headers or {}
     if IS_CLOUDFLARE:
-        # urllib não tem sockets no Pyodide: no Worker toda saída HTTP passa pelo fetch()
+        # urllib não tem sockets no Pyodide: no Worker toda saída HTTP passa pelo fetch().
+        # O nginx do gateway do POL responde 403 a requisições sem User-Agent (o fetch do Worker não envia um).
+        req_headers = {"User-Agent": "PolNotifier-Web/2.1", **req_headers}
         try:
             resp = await cf_fetch(url, method=method, headers=req_headers, body=data.decode("utf-8") if data else None)
             return resp.status, {}, (await resp.text()).encode("utf-8")
@@ -208,13 +210,15 @@ async def pol_detect_office():
 async def pol_fetch_all(path: str, label: str) -> List[Dict[str, Any]]:
     """Todas as páginas (size=100&page=N); o gateway devolve só a primeira sem `page`."""
     if not await pol_authenticate():
+        CTX["error"] = "Sessão do POL expirada ou inválida: saia e entre de novo."
         return []
     out: List[Dict[str, Any]] = []
     for page in range(50):
         sep = "&" if "?" in path else "?"
         status, _, body = await http_request(f"{GATEWAY_URL}{path}{sep}size=100&page={page}", headers=pol_headers())
         if status != 200:
-            log("ERROR", f"Erro busca {label} HTTP {status}")
+            log("ERROR", f"Erro busca {label} HTTP {status}: {body.decode('utf-8', errors='ignore')[:120]}")
+            CTX["error"] = f"O POL recusou a busca de {label} (HTTP {status})."
             return out
         try:
             arr = json.loads(body.decode("utf-8"))
@@ -321,14 +325,12 @@ class SmtpError(Exception):
 async def smtp_send_rpc(host: str, port: int, user: str, password: str, rcpts: List[str], msg: EmailMessage):
     """No Worker o Python ainda não faz TLS em sockets ("SSL/TLS via create_connection is not yet supported"):
     o envio vai por RPC (service binding SMTP) para o Worker JavaScript `pol-adv-smtp` (smtp-worker/)."""
-    from js import Object
-    from pyodide.ffi import to_js
     rpc = getattr(CF_ENV, "SMTP", None) if CF_ENV is not None else None
     if rpc is None:
         raise RuntimeError("binding SMTP (Worker pol-adv-smtp) não configurado")
     raw = base64.b64encode(msg.as_bytes(policy=email_policy.SMTP)).decode("ascii")
-    await rpc.send(to_js({"host": host, "port": port, "user": user, "password": password, "from": user, "to": rcpts, "raw": raw},
-                         dict_converter=Object.fromEntries))
+    # Texto JSON em vez de objeto: sem conversão Python→JS (to_js falhou em produção)
+    await rpc.send(json.dumps({"host": host, "port": port, "user": user, "password": password, "from": user, "to": rcpts, "raw": raw}))
 
 def smtp_send_blocking(host: str, port: int, user: str, password: str, msg: EmailMessage, rcpts: List[str]):
     import smtplib
@@ -1021,7 +1023,7 @@ INDEX_HTML = """<!DOCTYPE html>
         const res = await fetch('/api/sync', { method: 'POST' });
         const data = await res.json();
         renderDashboard(data);
-        status.innerText = '🟢 Atualizado agora';
+        status.innerText = data.error ? '⚠️ ' + data.error : '🟢 Atualizado agora';
       } catch (e) {
         status.innerText = '❌ Erro ao sincronizar';
       } finally {
@@ -1679,10 +1681,11 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
 
     # 2. Sincronização Completa
     if path == "/api/sync":
+        CTX["error"] = None
         tasks = await pol_get_tasks()
         events = await pol_get_events()
         classified = classify_items(tasks, events)
-        return json_response(200, classified)
+        return json_response(200, {**classified, "error": CTX.get("error")})
 
     # 2a. Dados completos para o Kanban e o calendário mensal
     if path == "/api/board":
