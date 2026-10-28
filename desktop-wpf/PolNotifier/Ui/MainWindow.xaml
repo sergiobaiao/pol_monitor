@@ -232,7 +232,7 @@
                                 <CheckBox x:Name="ChkAutoStart" Content="Iniciar o POL ADV Notifier junto com o Windows" Margin="0,4"/>
                                 <CheckBox x:Name="ChkStartFence" Content="Exibir widget na Área de Trabalho ao iniciar (estilo Fences)" Margin="0,4"/>
                                 <CheckBox x:Name="ChkStartMain" Content="Abrir painel principal automaticamente ao iniciar (se desativado, inicia silencioso na bandeja)" Margin="0,4"/>
-                                <CheckBox x:Name="ChkMinTray" Content="Minimizar para a bandeja do sistema ao clicar em '_' (oculta da barra de tarefas)" Margin="0,4"/>
+                                <CheckBox x:Name="ChkMinTray" Content="Minimizar para a bandeja do sistema ao clicar em '__' (oculta da barra de tarefas)" Margin="0,4"/>
                                 <CheckBox x:Name="ChkCloseTray" Content="Fechar para a bandeja do sistema ao clicar no 'X' (em vez de encerrar o app)" Margin="0,4"/>
                                 <Button Content="💾 Salvar Opções de Janela e Inicialização" Style="{StaticResource AccentButton}" HorizontalAlignment="Right" Margin="0,10,0,0" Click="OnSaveStartup"/>
                             </StackPanel>

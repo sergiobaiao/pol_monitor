@@ -125,6 +125,14 @@ public static class Formatter
         return 1.05 / (lum + 0.05);
     }
 
+    /// <summary>Telegram/WhatsApp não têm cor de texto: o gradiente vira um marcador por item.</summary>
+    public static string UrgencyEmoji(Item it)
+    {
+        if (it.Deadline is not { } d) return "⚪";
+        var days = (d.Date - DateTime.Today).TotalDays;
+        return days < 0 ? "⛔" : days == 0 ? "🔴" : days <= 2 ? "🟠" : days <= 5 ? "🟡" : "🟢";
+    }
+
     public static string UrgencyColor(Item it, bool dark = false) =>
         UrgencyColor(it.Deadline is { } d ? (d.Date - DateTime.Today).TotalDays : null, dark);
 
@@ -284,10 +292,10 @@ public static class Formatter
     }
 
     public static string ToTelegramMarkdown(ClassifiedItems c) => Lines(c, h => $"*{h}*",
-        it => $"• *[{it.Type}]* {it.Title} — `{it.DeadlineStr}`", "⏳ ATRASADAS / PENDENTES:", "tarefas atrasadas",
+        it => $"{UrgencyEmoji(it)} `{it.DeadlineStr}` — {(it.IsTask ? "" : "*[Agenda]* ")}{it.Title}", "⏳ ATRASADAS / PENDENTES:", "tarefas atrasadas",
         "🔗 [Acessar POL ADV](https://office.pol.adv.br)", "⚖️ *POL ADV — Resumo de Prazos*");
 
     public static string ToOpenWaText(ClassifiedItems c) => Lines(c, h => $"*{h}*",
-        it => $"• *[{it.Type}]* {it.Title} ({it.DeadlineStr})", "⏳ TAREFAS ATRASADAS / PENDENTES:", "tarefas",
+        it => $"{UrgencyEmoji(it)} *{it.DeadlineStr}* — {(it.IsTask ? "" : "*[Agenda]* ")}{it.Title}", "⏳ TAREFAS ATRASADAS / PENDENTES:", "tarefas",
         "Acesse: https://office.pol.adv.br", "*⚖️ POL ADV — Resumo de Prazos*");
 }

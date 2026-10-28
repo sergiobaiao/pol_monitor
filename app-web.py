@@ -357,7 +357,8 @@ def classify_items(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) ->
             "title": t.get("name", "Sem título"),
             "description": t.get("description") or "",
             "deadline_str": dt.strftime("%d/%m/%Y %H:%M") if dt else "Sem prazo",
-            "priority": t.get("priority", "NORMAL")
+            "priority": t.get("priority", "NORMAL"),
+            "days": (dt.date() - today).days if dt else None,
         }
         if not dt:
             res["overdue"].append(it)
@@ -387,7 +388,8 @@ def classify_items(tasks: List[Dict[str, Any]], events: List[Dict[str, Any]]) ->
             "title": ev.get("title", "Sem título"),
             "description": ev.get("location") or ev.get("description") or "",
             "deadline_str": dt.strftime("%d/%m/%Y %H:%M"),
-            "priority": "ALTA" if "audiência" in ev.get("title", "").lower() else "NORMAL"
+            "priority": "ALTA" if "audiência" in ev.get("title", "").lower() else "NORMAL",
+            "days": (item_d - today).days,
         }
         if item_d == today:
             res["today"].append(it)
@@ -1251,6 +1253,12 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
 
     return 404, "text/plain", b"Not Found", []
 
+def urgency_emoji(days: Optional[int]) -> str:
+    """Telegram/WhatsApp não têm cor de texto: o gradiente verde → vermelho vira um marcador por item."""
+    if days is None:
+        return "⚪"
+    return "⛔" if days < 0 else "🔴" if days == 0 else "🟠" if days <= 2 else "🟡" if days <= 5 else "🟢"
+
 def format_summary(classified: Dict[str, Any]) -> str:
     sections = [("🔴 Hoje", "today"), ("🟠 Próximos 2 dias", "tomorrow"), ("🟡 Esta semana", "this_week"), ("⚫ Atrasadas", "overdue")]
     lines = [f"⚖️ *POL ADV — Prazos {datetime.now(TZ).strftime('%d/%m/%Y')}*"]
@@ -1260,7 +1268,7 @@ def format_summary(classified: Dict[str, Any]) -> str:
             continue
         lines.append(f"\n*{title} ({len(items)})*")
         for it in items[:10]:
-            lines.append(f"• {it['deadline_str']} — {it['title']}")
+            lines.append(f"{urgency_emoji(it.get('days'))} {it['deadline_str']} — {it['title']}")
         if len(items) > 10:
             lines.append(f"… e mais {len(items) - 10}")
     return "\n".join(lines)
