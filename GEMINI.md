@@ -8,7 +8,7 @@ Guia para o Gemini CLI neste repositório. Contexto detalhado (APIs, estrutura, 
 
 ## Componentes
 - **`desktop-wpf/`** — desktop **.NET 10 + WPF** (edição ativa; substitui `app/`): login no Keycloak com senha no Credential Manager (formato do `keyring`), SQLite por usuário em `data/users/<sub>.db`, agendador, widget estilo Fences, painel (Início, Tarefas Lista/Kanban, Calendário Mês/Lista, Notificações, Configurações, Logs), bandeja, instalador NSIS.
-- **`app-web.py`** — web autocontida (SPA embutida) e Python Worker no Cloudflare; persistência no KV `POL_STORE`; e-mail pelo Gmail API (OAuth do usuário). **Não importa nada do desktop**: regra de negócio corrigida num lado deve ser replicada no outro.
+- **`app-web.py`** — web autocontida (SPA embutida) e Python Worker no Cloudflare; persistência no KV `POL_STORE`; e-mail por OAuth (Gmail API) ou senha de app do Google (SMTP; no Worker só a porta 465, via cliente asyncio sobre `connect()`). **Não importa nada do desktop**: regra de negócio corrigida num lado deve ser replicada no outro.
 - **`server.py` + `index.html` + `swagger/`** — Swagger UI e proxy CORS do POL.
 - **`app/`** — desktop antigo em Python/CustomTkinter, só referência. Não rodar junto com o .NET (duplica agendador e notificações).
 

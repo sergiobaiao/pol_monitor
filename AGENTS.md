@@ -15,7 +15,7 @@ O **POL ADV Notifier** é um ecossistema completo para monitoramento automatizad
 O projeto é composto por:
 1. **Desktop App (Windows) — `desktop-wpf/`, .NET 10 + WPF**: tema escuro Fluent, bandeja (`NotifyIcon`), agendador em background, notificações multicanal (E-mail, Telegram, WhatsApp), painel com Kanban e calendário mensal como no POL e **Widget de Área de Trabalho estilo Stardock Fences**. Substitui a versão Python (`app/`), mantida só como referência.
 2. **Swagger UI & Proxy Local**: Servidor local em `http://127.0.0.1:8000` (`server.py`) com especificações OpenAPI 3.0 consolidadas das 476 rotas da API do POL ADV e proxy CORS reverso.
-3. **Web Edition & Cloudflare Workers**: Aplicação web (`app-web.py`) com SPA embutida, execução local ou Python Worker (Pyodide) em `https://pol-adv-web.victorlimapge.workers.dev`, com persistência no KV `POL_STORE`. Independente do desktop: regra de negócio corrigida num lado deve ser replicada no outro.
+3. **Web Edition & Cloudflare Workers**: Aplicação web (`app-web.py`) com SPA embutida, execução local ou Python Worker (Pyodide) em `https://pol-adv-web.victorlimapge.workers.dev`, com persistência no KV `POL_STORE` e e-mail por OAuth (Gmail API) **ou** senha de app do Google (SMTP, porta 465 no Worker). Independente do desktop: regra de negócio corrigida num lado deve ser replicada no outro.
 4. **CI/CD e releases** (`.github/workflows/`, `release.ps1`, instalador NSIS): ver seção 7.
 
 ---

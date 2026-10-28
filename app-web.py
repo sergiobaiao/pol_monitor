@@ -20,7 +20,9 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import base64
+import re
 from email.message import EmailMessage
+from email import policy as email_policy
 
 # Identificar se está rodando no ambiente Cloudflare Workers (Pyodide)
 IS_CLOUDFLARE = False
@@ -48,7 +50,8 @@ DEFAULT_CONFIG = {
     "check_interval_minutes": 60,
     # Notificações
     "email_enabled": False,
-    "email_recipients": "",  # vazio = envia para o próprio Gmail conectado
+    "email_method": "oauth",  # "oauth" (Gmail API) ou "smtp" (senha de app do Google; credenciais em STORE.users[sub].smtp)
+    "email_recipients": "",  # vazio = envia para o próprio Gmail conectado / o usuário SMTP
     "telegram_enabled": False,
     "telegram_token": "",
     "telegram_chat_ids": "",
@@ -281,7 +284,105 @@ async def gmail_callback(origin: str, params: Dict[str, str]) -> str:
     log("INFO", f"Gmail conectado: {g['email']}")
     return ""
 
+def smtp_data() -> Dict[str, Any]:
+    return STORE["users"][CTX["sub"]].setdefault("smtp", {})
+
+class SmtpError(Exception):
+    pass
+
+async def smtp_send_async(host: str, port: int, user: str, password: str, sender: str, rcpts: List[str], raw: bytes):
+    """Cliente SMTP mínimo sobre asyncio (smtplib é bloqueante e não serve no Pyodide). Só TLS direto (465):
+    no Worker o socket vem do connect() da Cloudflare e a porta 587/STARTTLS não é suportada aqui."""
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port, ssl=(port == 465)), 20)
+
+    async def read_reply() -> Tuple[int, str]:
+        lines = []
+        while True:
+            line = (await asyncio.wait_for(reader.readline(), 20)).decode("utf-8", "ignore").rstrip()
+            if not line:
+                raise SmtpError("conexão encerrada pelo servidor")
+            lines.append(line)
+            if len(line) < 4 or line[3] != "-":
+                return int(line[:3]), " ".join(lines)
+
+    async def cmd(text: Optional[str], ok: Tuple[int, ...]):
+        if text is not None:
+            writer.write(text.encode("utf-8") + b"\r\n")
+            await writer.drain()
+        code, reply = await read_reply()
+        if code not in ok:
+            raise SmtpError(f"{code} {reply}")
+
+    try:
+        await cmd(None, (220,))
+        await cmd("EHLO pol-adv-web", (250,))
+        await cmd("AUTH PLAIN " + base64.b64encode(f"\0{user}\0{password}".encode("utf-8")).decode("ascii"), (235,))
+        await cmd(f"MAIL FROM:<{sender}>", (250,))
+        for r in rcpts:
+            await cmd(f"RCPT TO:<{r}>", (250, 251))
+        await cmd("DATA", (354,))
+        body = re.sub(rb"(?m)^\.", b"..", raw.rstrip(b"\r\n"))  # dot-stuffing
+        writer.write(body + b"\r\n.\r\n")
+        await writer.drain()
+        await cmd(None, (250,))
+        try:
+            await cmd("QUIT", (221,))
+        except Exception:
+            pass
+    finally:
+        writer.close()
+
+def smtp_send_blocking(host: str, port: int, user: str, password: str, msg: EmailMessage, rcpts: List[str]):
+    import smtplib
+    if port == 465:
+        server = smtplib.SMTP_SSL(host, port, timeout=20)
+    else:
+        server = smtplib.SMTP(host, port, timeout=20)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+    with server:
+        server.login(user, password)
+        server.send_message(msg, from_addr=user, to_addrs=rcpts)
+
+async def send_email_smtp(subject: str, html_body: str, text_body: str) -> Tuple[bool, str]:
+    """E-mail por SMTP com a senha de app do Google (alternativa ao OAuth)."""
+    sm = smtp_data()
+    host, port = sm.get("host") or "smtp.gmail.com", int(sm.get("port") or 465)
+    user, password = sm.get("user", ""), sm.get("password", "")
+    if not user or not password:
+        return False, "E-mail: informe o e-mail e a senha de app do Google e salve."
+    if IS_CLOUDFLARE and port != 465:
+        return False, "E-mail: no Worker use a porta 465 (TLS direto); a 587/STARTTLS só funciona na versão local."
+    raw = user_cfg().get("email_recipients", "")
+    recipients = [r.strip() for r in raw.replace(";", ",").split(",") if r.strip()] or [user]
+
+    msg = EmailMessage()
+    msg["From"] = user
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = subject
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+    try:
+        if IS_CLOUDFLARE:
+            await smtp_send_async(host, port, user, password, user, recipients, msg.as_bytes(policy=email_policy.SMTP))
+        else:
+            await asyncio.to_thread(smtp_send_blocking, host, port, user, password, msg, recipients)
+    except Exception as e:
+        err = str(e)
+        log("ERROR", f"SMTP {host}:{port}: {err[:200]}")
+        if "535" in err or "Authentication" in err:
+            return False, "E-mail: o Google recusou o usuário ou a senha de app. Gere uma nova em myaccount.google.com/apppasswords (precisa da verificação em duas etapas)."
+        return False, f"E-mail: falha no envio SMTP ({err[:160]})."
+    log("INFO", f"E-mail enviado via SMTP para {len(recipients)} destinatário(s).")
+    return True, f"E-mail enviado para {', '.join(recipients)}!"
+
 async def send_email(subject: str, html_body: str, text_body: str) -> Tuple[bool, str]:
+    if user_cfg().get("email_method") == "smtp":
+        return await send_email_smtp(subject, html_body, text_body)
+    return await send_email_gmail(subject, html_body, text_body)
+
+async def send_email_gmail(subject: str, html_body: str, text_body: str) -> Tuple[bool, str]:
     g = gmail_data()
     if not g.get("refresh_token"):
         return False, "E-mail: Gmail não conectado."
@@ -703,32 +804,73 @@ INDEX_HTML = """<!DOCTYPE html>
 
         <div class="card-glass p-5 space-y-4">
           <div class="flex justify-between items-center border-b border-zinc-800 pb-3">
-            <h3 class="font-bold text-base text-zinc-100 flex items-center gap-2">📧 E-mail via Gmail</h3>
+            <h3 class="font-bold text-base text-zinc-100 flex items-center gap-2">📧 E-mail</h3>
             <button onclick="testChannel('email')" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-1.5 rounded-md text-zinc-300 font-medium">🧪 Testar E-mail</button>
           </div>
-          <p id="gmail-status" class="text-xs text-zinc-400">Carregando...</p>
+          <div class="flex flex-wrap gap-4 text-xs text-zinc-300">
+            <label class="flex items-center gap-2"><input type="radio" name="email-method" value="oauth" onchange="setEmailMethod('oauth')" checked> OAuth do Google (Gmail API)</label>
+            <label class="flex items-center gap-2"><input type="radio" name="email-method" value="smtp" onchange="setEmailMethod('smtp')"> Senha de app do Google (SMTP)</label>
+          </div>
+
+          <div id="email-smtp" class="hidden space-y-4">
+            <p id="smtp-status" class="text-xs text-zinc-400">Carregando...</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">E-mail (conta Google):</label>
+                <input type="text" id="smtp-user" placeholder="voce@gmail.com" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">Senha de app (16 letras):</label>
+                <input type="password" id="smtp-pass" placeholder="xxxx xxxx xxxx xxxx" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">Servidor SMTP:</label>
+                <input type="text" id="smtp-host" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">Porta (465 = TLS direto):</label>
+                <input type="number" id="smtp-port" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button onclick="saveSmtp()" class="bg-zinc-700 hover:bg-zinc-600 text-xs font-semibold px-3 py-2 rounded-lg">💾 Salvar SMTP</button>
+              <button onclick="clearSmtp()" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-2 rounded-lg text-zinc-300">Remover senha</button>
+            </div>
+            <details class="bg-zinc-900/60 border border-zinc-800 rounded-lg p-4 text-xs text-zinc-300">
+              <summary class="cursor-pointer font-semibold text-zinc-100">📘 Como gerar a senha de app do Google (1 minuto)</summary>
+              <ol class="list-decimal ml-5 mt-3 space-y-2">
+                <li>Ative a <a class="text-blue-400 underline" target="_blank" href="https://myaccount.google.com/signinoptions/twosv">verificação em duas etapas</a> na sua conta Google (é exigida pelo Google).</li>
+                <li>Abra <a class="text-blue-400 underline" target="_blank" href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>, dê um nome (ex.: <i>POL ADV</i>) e clique em <b>Criar</b>.</li>
+                <li>Copie as 16 letras (os espaços são ignorados), cole em <b>Senha de app</b>, preencha seu e-mail e clique em <b>Salvar SMTP</b>.</li>
+                <li>Marque <b>Enviar o resumo também por e-mail</b>, <b>Salvar Configurações</b> e use <b>Testar E-mail</b>.</li>
+              </ol>
+              <p class="mt-3 text-zinc-500">A senha fica salva só na sua conta deste app (nunca volta para o navegador) e dá acesso apenas ao envio por SMTP; para revogar, apague-a no link acima. Servidor Google: <code>smtp.gmail.com</code>, porta <code>465</code>. No Cloudflare só a porta 465 funciona.</p>
+            </details>
+          </div>
+
+          <p id="gmail-status" class="oauth-only text-xs text-zinc-400">Carregando...</p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="cfg-email-enabled"> Enviar o resumo também por e-mail</label>
             <div>
               <label class="text-xs text-zinc-400 font-semibold block mb-1">Destinatários (vazio = o próprio Gmail):</label>
               <input type="text" id="cfg-email-recipients" placeholder="a@x.com, b@y.com" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
             </div>
-            <div>
+            <div class="oauth-only">
               <label class="text-xs text-zinc-400 font-semibold block mb-1">ID do cliente OAuth:</label>
               <input type="text" id="gmail-client-id" placeholder="....apps.googleusercontent.com" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
             </div>
-            <div>
+            <div class="oauth-only">
               <label class="text-xs text-zinc-400 font-semibold block mb-1">Chave secreta do cliente:</label>
               <input type="password" id="gmail-client-secret" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
             </div>
           </div>
-          <div class="flex flex-wrap gap-2">
+          <div class="oauth-only flex flex-wrap gap-2">
             <button onclick="saveGmailClient()" class="bg-zinc-700 hover:bg-zinc-600 text-xs font-semibold px-3 py-2 rounded-lg">💾 Salvar cliente OAuth</button>
             <a href="/oauth/google/start" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-2 rounded-lg">🔗 Conectar Gmail</a>
             <button onclick="disconnectGmail()" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-2 rounded-lg text-zinc-300">Desconectar</button>
           </div>
 
-          <details class="bg-zinc-900/60 border border-zinc-800 rounded-lg p-4 text-xs text-zinc-300">
+          <details class="oauth-only bg-zinc-900/60 border border-zinc-800 rounded-lg p-4 text-xs text-zinc-300">
             <summary class="cursor-pointer font-semibold text-zinc-100">📘 Como criar seu cliente OAuth do Gmail (uma vez só, ~10 min)</summary>
             <p class="mt-3 text-zinc-400">Cada usuário cria o próprio "app" no Google Cloud. É gratuito, não precisa de cartão, e o e-mail sai da sua própria conta Gmail. Faça login no Google com o Gmail que vai enviar os e-mails.</p>
             <ol class="list-decimal ml-5 mt-3 space-y-2">
@@ -946,7 +1088,51 @@ INDEX_HTML = """<!DOCTYPE html>
       document.getElementById('cfg-wa-recipients').value = cfg.openwa_recipients || '';
       document.getElementById('cfg-email-enabled').checked = !!cfg.email_enabled;
       document.getElementById('cfg-email-recipients').value = cfg.email_recipients || '';
+      const method = cfg.email_method === 'smtp' ? 'smtp' : 'oauth';
+      document.querySelector('input[name="email-method"][value="' + method + '"]').checked = true;
+      setEmailMethod(method);
       loadGmail();
+      loadSmtp();
+    }
+
+    function emailMethod() {
+      return document.querySelector('input[name="email-method"]:checked').value;
+    }
+
+    function setEmailMethod(m) {
+      document.getElementById('email-smtp').classList.toggle('hidden', m !== 'smtp');
+      document.querySelectorAll('.oauth-only').forEach(el => el.classList.toggle('hidden', m === 'smtp'));
+    }
+
+    async function loadSmtp() {
+      const s = await (await fetch('/api/smtp')).json();
+      document.getElementById('smtp-user').value = s.user || '';
+      document.getElementById('smtp-host').value = s.host || 'smtp.gmail.com';
+      document.getElementById('smtp-port').value = s.port || 465;
+      document.getElementById('smtp-pass').placeholder = s.has_password ? '•••• (salva)' : 'xxxx xxxx xxxx xxxx';
+      document.getElementById('smtp-status').innerHTML = s.user && s.has_password
+        ? '🟢 Senha de app salva para <b>' + s.user + '</b>. Use <b>Testar E-mail</b>.'
+        : '⚪ Não configurado. Veja o passo a passo abaixo.';
+    }
+
+    async function saveSmtp() {
+      await fetch('/api/smtp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: document.getElementById('smtp-user').value,
+          host: document.getElementById('smtp-host').value,
+          port: parseInt(document.getElementById('smtp-port').value || '465'),
+          password: document.getElementById('smtp-pass').value
+        })
+      });
+      document.getElementById('smtp-pass').value = '';
+      loadSmtp();
+    }
+
+    async function clearSmtp() {
+      await fetch('/api/smtp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) });
+      loadSmtp();
     }
 
     async function loadGmail() {
@@ -987,6 +1173,7 @@ INDEX_HTML = """<!DOCTYPE html>
         openwa_api_key: document.getElementById('cfg-wa-key').value,
         openwa_recipients: document.getElementById('cfg-wa-recipients').value,
         email_enabled: document.getElementById('cfg-email-enabled').checked,
+        email_method: emailMethod(),
         email_recipients: document.getElementById('cfg-email-recipients').value
       };
       await fetch('/api/config', {
@@ -1012,6 +1199,13 @@ INDEX_HTML = """<!DOCTYPE html>
     }
 
     async function testChannel(channel) {
+      if (channel === 'email') {
+        await fetch('/api/config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email_method: emailMethod(), email_recipients: document.getElementById('cfg-email-recipients').value })
+        });
+        if (emailMethod() === 'smtp') await saveSmtp();
+      }
       const res = await fetch('/api/test-channel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1217,6 +1411,28 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
             "connected": bool(g.get("refresh_token")), "email": g.get("email", ""),
             "redirect_uri": origin + GMAIL_CALLBACK,
         })
+
+    # 4a. E-mail por senha de app do Google (SMTP)
+    if path == "/api/smtp":
+        sm = smtp_data()
+        if method == "POST":
+            try:
+                req = json.loads(body_bytes.decode("utf-8"))
+                for k in ("host", "user"):
+                    if k in req:
+                        sm[k] = str(req[k]).strip()
+                if "port" in req:
+                    sm["port"] = int(req["port"] or 465)
+                if (req.get("password") or "").strip():
+                    sm["password"] = "".join(req["password"].split())  # o Google mostra a senha em 4 blocos com espaços
+                if req.get("clear"):
+                    sm.pop("password", None)
+            except Exception as e:
+                return json_response(400, {"error": str(e)})
+            save_store()
+            return json_response(200, {"status": "ok"})
+        return json_response(200, {"host": sm.get("host", "smtp.gmail.com"), "port": sm.get("port", 465),
+                                   "user": sm.get("user", ""), "has_password": bool(sm.get("password"))})
 
     if path == "/api/gmail/disconnect" and method == "POST":
         g = gmail_data()
