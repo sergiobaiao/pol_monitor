@@ -35,7 +35,7 @@ public static class CredentialStore
     [DllImport("advapi32.dll")]
     static extern void CredFree(IntPtr cred);
 
-    static string Compound(string user) => $"{user}@{Service}";
+    static string Compound(string user, string service) => $"{user}@{service}";
 
     static (string User, string Password)? Read(string target)
     {
@@ -67,23 +67,23 @@ public static class CredentialStore
         finally { Marshal.FreeHGlobal(blob); }
     }
 
-    public static string? GetPassword(string user)
+    public static string? GetPassword(string user, string service = Service)
     {
-        var res = Read(Service);
-        if (res == null || res.Value.User != user) res = Read(Compound(user));
+        var res = Read(service);
+        if (res == null || res.Value.User != user) res = Read(Compound(user, service));
         return res?.Password;
     }
 
-    public static void SetPassword(string user, string password)
+    public static void SetPassword(string user, string password, string service = Service)
     {
         // Igual ao keyring: quem estava no alvo simples vai para o alvo composto
-        if (Read(Service) is { } existing) Write(Compound(existing.User), existing.User, existing.Password);
-        Write(Service, user, password);
+        if (Read(service) is { } existing && existing.User != user) Write(Compound(existing.User, service), existing.User, existing.Password);
+        Write(service, user, password);
     }
 
-    public static void DeletePassword(string user)
+    public static void DeletePassword(string user, string service = Service)
     {
-        foreach (var target in new[] { Service, Compound(user) })
+        foreach (var target in new[] { service, Compound(user, service) })
             if (Read(target) is { } c && c.User == user && !CredDeleteW(target, CRED_TYPE_GENERIC, 0)
                 && Marshal.GetLastWin32Error() != ERROR_NOT_FOUND)
                 throw new System.ComponentModel.Win32Exception();

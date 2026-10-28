@@ -172,6 +172,8 @@ public sealed class Database
         Query("SELECT item_type, raw_json FROM cached_items ORDER BY deadline ASC")
             .Select(r => ((string)r["item_type"]!, r["raw_json"] as string ?? "{}")).ToList();
 
+    public void ClearCachedItems() => Exec("DELETE FROM cached_items");
+
     // --- Deduplicação de notificações ---
     public bool IsAlreadyNotified(string itemId, string channel, string section, string sentDate) =>
         Query("""

@@ -205,6 +205,16 @@
                                 <TextBlock x:Name="LblConnected" Foreground="{StaticResource FgMuted}" Margin="0,2,0,4"/>
                                 <TextBlock Text="Office ID (Tenant):" Style="{StaticResource FieldLabel}"/>
                                 <TextBox x:Name="TxtOffice" Width="260" HorizontalAlignment="Left"/>
+                                <TextBlock Text="Conta da API (usada para buscar os dados no POL; pode ser diferente do login):" Style="{StaticResource FieldLabel}" Margin="0,18,0,2"/>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,8,0"><TextBlock Text="Usuário da API (e-mail):" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TxtApiUser"/></StackPanel>
+                                    <StackPanel Margin="8,0,0,0"><TextBlock Text="Senha da API (em branco = não alterar):" Style="{StaticResource FieldLabel}"/><PasswordBox x:Name="TxtApiPass"/></StackPanel>
+                                </UniformGrid>
+                                <TextBlock x:Name="LblApiStatus" FontSize="11" Foreground="{StaticResource FgMuted}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="💾 Salvar conta da API" Style="{StaticResource AccentButton}" Click="OnSaveApi"/>
+                                    <Button Content="↩ Usar a conta do login" Style="{StaticResource FlatButton}" Margin="8,0,0,0" Click="OnApiUseLogin"/>
+                                </StackPanel>
                                 <DockPanel Margin="0,14,0,0">
                                     <Button DockPanel.Dock="Right" Content="💾 Salvar" Style="{StaticResource AccentButton}" Click="OnSavePol"/>
                                     <StackPanel Orientation="Horizontal">

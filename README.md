@@ -31,6 +31,8 @@ O desktop em Python (`app/`) é a versão antiga, mantida só como referência.
 - **Sem repetição:** cada canal recebe o resumo uma vez por dia, a menos que apareça um item novo. O botão **📨 Relatório** (desktop) e **Enviar relatório agora** (web) reenviam na hora.
 - O desktop e a web geram mensagens **idênticas**.
 
+**Conta da API:** o login identifica quem usa o app, mas os dados do POL podem vir de **outra conta**. Em *Configurações → Conta POL ADV* informe o usuário e a senha da API (por padrão é a conta do login). Ao trocar, o app valida as credenciais, limpa os dados em cache e passa a usar o escritório dessa conta; "Usar a conta do login" desfaz.
+
 **Vários usuários:** cada usuário tem as próprias configurações. A senha lembrada fica no Gerenciador de Credenciais do Windows (desktop) e só o refresh token de quem marca "Lembrar" fica no servidor (web).
 
 ---

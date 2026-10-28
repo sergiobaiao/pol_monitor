@@ -64,6 +64,8 @@
 - [x] **T-9.9:** Nova logo do app (ícone do exe/janelas/bandeja/instalador, telas do desktop, favicon e cabeçalho da web).
 - [x] **T-9.8:** Web: envio de e-mail também por senha de app do Google (SMTP, `/api/smtp`), além do OAuth. Teste real no Worker mostrou que o Python não faz TLS em sockets; envio feito pelo Worker JavaScript auxiliar `pol-adv-smtp` (RPC), cliente validado em Node contra servidor falso; envio real a confirmar pelo usuário.
 
+- [x] **T-9.10:** Conta da API configurável nas Configurações (desktop e web), independente do login; padrão = conta do login. Senha da API no Credential Manager (desktop) / só refresh token (web).
+
 ## Fase 10: Repositório, CI/CD e Releases
 - [x] **T-10.1:** Repositório https://github.com/sergiobaiao/pol_monitor; JWT removido do código; `.gitignore` (dados, `.env`, binários, `swagger/*.json`).
 - [x] **T-10.2:** `build.ps1`, `publish.ps1`, `release.ps1` (próxima tag vX.Y.Z automática) e instalador NSIS (atalho na Área de Trabalho, pasta no Menu Iniciar, início com o Windows).

@@ -18,6 +18,8 @@ public sealed class Config(Database db)
     // --- Conta POL ADV ---
     public string PolEmail { get => Str("pol_email", ""); set => Db.SetSetting("pol_email", value.Trim()); }
     public string PolOfficeId { get => Str("pol_office_id", ""); set => Db.SetSetting("pol_office_id", value.Trim()); }
+    /// <summary>Conta usada na API do POL; vazio = a mesma do login (a senha fica no Credential Manager).</summary>
+    public string PolApiUser { get => Str("pol_api_user", ""); set => Db.SetSetting("pol_api_user", value.Trim()); }
     public string PolUserId { get => Str("pol_user_id", ""); set => Db.SetSetting("pol_user_id", value.Trim()); }
 
     // --- Janelas ---

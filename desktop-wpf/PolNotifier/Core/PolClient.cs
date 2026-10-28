@@ -29,9 +29,17 @@ public sealed class PolClient(Config config)
 
     readonly Database _db = config.Db;
     readonly SemaphoreSlim _authLock = new(1, 1);
-    // Tokens e senha ficam só em memória; o login acontece a cada abertura do app
-    string? _accessToken, _refreshToken, _password;
+    // Tokens e senhas ficam só em memória; o login acontece a cada abertura do app
+    string? _accessToken, _refreshToken;
     DateTime _expiry;
+    // O login do app identifica o usuário/banco; a conta da API é quem de fato é consultado no POL.
+    // Por padrão são a mesma, mas podem ser diferentes (Configurações → Conta da API).
+    string _loginEmail = "", _loginPassword = "", _activeUser = "", _activePassword = "", _apiSub = "";
+    public const string ApiCredentialService = "POL ADV Notifier API";
+
+    /// <summary>Usuário cuja conta a API está usando agora.</summary>
+    public string ApiUser => _activeUser;
+    public bool UsesLoginAccount => string.Equals(_activeUser, _loginEmail, StringComparison.OrdinalIgnoreCase);
 
     static async Task<HttpResponseMessage> PostToken(Dictionary<string, string> form) =>
         await Http.PostAsync(KeycloakTokenUrl, new FormUrlEncodedContent(form));
@@ -73,12 +81,85 @@ public sealed class PolClient(Config config)
 
     public async Task StartSession(Tokens tokens, string email, string password)
     {
-        _password = password;
+        _loginEmail = _activeUser = email;
+        _loginPassword = _activePassword = password;
+        _refreshToken = null;
         Store(tokens);
         config.PolEmail = email;
-        config.PolUserId = (string?)JwtClaims(_accessToken!)["sub"] ?? "";
-        if (string.IsNullOrEmpty(config.PolOfficeId)) await LoadOffice();
+        _apiSub = config.PolUserId = (string?)JwtClaims(_accessToken!)["sub"] ?? "";
         _db.Log("INFO", $"Login POL ADV realizado para {email}");
+        await ApplySavedApiAccount();
+        if (string.IsNullOrEmpty(config.PolOfficeId)) await LoadOffice();
+    }
+
+    /// <summary>Se o usuário configurou uma conta de API diferente do login, entra com ela (senha no Credential Manager).</summary>
+    async Task ApplySavedApiAccount()
+    {
+        var api = config.PolApiUser;
+        if (api == "" || string.Equals(api, _loginEmail, StringComparison.OrdinalIgnoreCase)) return;
+        string? pw = null;
+        try { pw = CredentialStore.GetPassword(api, ApiCredentialService); } catch (Exception) { }
+        if (pw == null)
+        {
+            _db.Log("WARNING", $"Senha da conta da API ({api}) não encontrada no Gerenciador de Credenciais; usando a conta do login.");
+            return;
+        }
+        try
+        {
+            SwitchTo(api, pw, await KeycloakLogin(api, pw));
+            _db.Log("INFO", $"Conta da API: {api}");
+        }
+        catch (LoginException e) { _db.Log("ERROR", $"Conta da API ({api}) recusada ({e.Message}); usando a conta do login."); }
+    }
+
+    void SwitchTo(string user, string password, Tokens t)
+    {
+        _activeUser = user;
+        _activePassword = password;
+        _refreshToken = null;
+        Store(t);
+        _apiSub = (string?)JwtClaims(_accessToken!)["sub"] ?? "";
+    }
+
+    /// <summary>Define a conta usada na API (pode ser diferente do login). Valida no Keycloak antes de salvar;
+    /// senha em branco reaproveita a salva (ou a do login, se for o mesmo usuário). Lança LoginException se recusada.</summary>
+    public async Task SetApiAccount(string user, string password)
+    {
+        user = user.Trim();
+        if (user == "") throw new LoginException("Informe o usuário da conta da API.");
+        if (string.Equals(user, _loginEmail, StringComparison.OrdinalIgnoreCase) && (password == "" || password == _loginPassword))
+        {
+            await UseLoginAccount();
+            return;
+        }
+        if (password == "")
+        {
+            password = (string.Equals(user, _activeUser, StringComparison.OrdinalIgnoreCase) ? _activePassword
+                        : CredentialStore.GetPassword(user, ApiCredentialService)) ?? "";
+            if (password == "") throw new LoginException("Informe a senha da conta da API.");
+        }
+        var tokens = await KeycloakLogin(user, password);
+        SwitchTo(user, password, tokens);
+        config.PolApiUser = user;
+        CredentialStore.SetPassword(user, password, ApiCredentialService);
+        await AfterAccountChange($"Conta da API alterada para {user}.");
+    }
+
+    public async Task UseLoginAccount()
+    {
+        var old = config.PolApiUser;
+        if (UsesLoginAccount && old == "") return;
+        SwitchTo(_loginEmail, _loginPassword, await KeycloakLogin(_loginEmail, _loginPassword));
+        config.PolApiUser = "";
+        if (old != "") { try { CredentialStore.DeletePassword(old, ApiCredentialService); } catch (Exception) { } }
+        await AfterAccountChange("A API voltou a usar a conta do login.");
+    }
+
+    async Task AfterAccountChange(string message)
+    {
+        _db.ClearCachedItems(); // o cache era de outra conta
+        await LoadOffice();     // o escritório pode ser outro
+        _db.Log("INFO", message);
     }
 
     void Store(Tokens t)
@@ -96,16 +177,16 @@ public sealed class PolClient(Config config)
             // Token válido com mais de 5 minutos de folga
             if (_accessToken != null && DateTime.UtcNow < _expiry.AddMinutes(-5)) return true;
             if (_refreshToken != null && await Refresh()) return true;
-            // Refresh expirou: refaz o login com a senha da sessão atual
-            if (_password == null)
+            // Refresh expirou: refaz o login com a senha da conta da API em uso
+            if (_activePassword == "")
             {
                 _db.Log("WARNING", "Sessão POL expirada. Faça login novamente.");
                 return false;
             }
             try
             {
-                Store(await KeycloakLogin(config.PolEmail, _password));
-                _db.Log("INFO", $"Sessão POL renovada para {config.PolEmail}");
+                Store(await KeycloakLogin(_activeUser, _activePassword));
+                _db.Log("INFO", $"Sessão POL renovada para {_activeUser}");
                 return true;
             }
             catch (LoginException e)
@@ -142,7 +223,7 @@ public sealed class PolClient(Config config)
         if (tenant)
         {
             req.Headers.Add("x-officeid", config.PolOfficeId);
-            req.Headers.Add("x-selecteduserid", config.PolUserId);
+            req.Headers.Add("x-selecteduserid", _apiSub);
         }
         return req;
     }

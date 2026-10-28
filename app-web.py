@@ -64,7 +64,8 @@ DEFAULT_CONFIG = {
 }
 
 # Estado persistido (data/web_store.json local, KV `POL_STORE` no Cloudflare). Senha nunca é salva:
-#   users:    {sub: {"email", "name", "config", "refresh_token" (só se marcou "Lembrar")}}
+#   users:    {sub: {"email", "name", "config", "refresh_token" (só se marcou "Lembrar"),
+#              "api": {"user", "sub", "refresh_token"} (conta da API diferente do login; a senha nunca é guardada)}}
 #   sessions: {sha256(cookie): sub}  -> sessões lembradas, sobrevivem a reinícios
 STORE: Dict[str, Any] = {"users": {}, "sessions": {}}
 # Só em memória: tokens das sessões abertas {sha256(cookie): {"sub", "access_token", "refresh_token", "expiry"}}
@@ -72,6 +73,8 @@ SESSIONS: Dict[str, Dict[str, Any]] = {}
 LOGS: Dict[str, List[Dict[str, Any]]] = {}
 # Usuário da requisição (ou do cron) em andamento; o servidor processa uma requisição por vez
 CTX: Dict[str, Any] = {"sub": None, "auth": None}
+# Tokens da conta da API (quando diferente do login), em memória: {login_sub: {"sub", "access_token", "refresh_token", "expiry", "api_for"}}
+API_AUTH: Dict[str, Dict[str, Any]] = {}
 
 SESSION_COOKIE = "pol_sid"
 REMEMBER_SECONDS = 30 * 24 * 3600
@@ -179,13 +182,33 @@ def set_tokens(auth: Dict[str, Any], data: Dict[str, Any]):
     auth["access_token"] = data.get("access_token")
     auth["refresh_token"] = data.get("refresh_token") or auth.get("refresh_token")
     auth["expiry"] = time.time() + data.get("expires_in", 300)
+    if auth.get("api_for"):  # conta da API: o refresh token renovado fica em users[login].api
+        api = (STORE["users"].get(auth["api_for"]) or {}).get("api")
+        if api and api.get("refresh_token") != auth["refresh_token"]:
+            api["refresh_token"] = auth["refresh_token"]
+            save_store()
+        return
     user = STORE["users"].get(auth["sub"])
     if user and user.get("refresh_token") and user["refresh_token"] != auth["refresh_token"]:
         user["refresh_token"] = auth["refresh_token"]  # lembrado: guarda o token renovado
         save_store()
 
+def activate_api_auth():
+    """Chamar depois de definir CTX["sub"]/CTX["auth"] (login do app). Se o usuário configurou uma conta de API
+    diferente do login, os dados do POL passam a ser buscados com ela (CTX["data_auth"]); senão, com o login."""
+    CTX["data_auth"] = None
+    sub = CTX["sub"]
+    api = (STORE["users"].get(sub) or {}).get("api")
+    if api and api.get("refresh_token"):
+        auth = API_AUTH.setdefault(sub, {})
+        auth.update({"sub": api["sub"], "api_for": sub, "refresh_token": api["refresh_token"]})
+        CTX["data_auth"] = auth
+
+def active_auth() -> Optional[Dict[str, Any]]:
+    return CTX.get("data_auth") or CTX["auth"]
+
 async def pol_authenticate() -> bool:
-    auth = CTX["auth"]
+    auth = active_auth()
     if not auth:
         return False
     # Se já tem token válido
@@ -201,16 +224,16 @@ async def pol_authenticate() -> bool:
 
 def pol_headers() -> Dict[str, str]:
     return {
-        "Authorization": f"Bearer {CTX['auth']['access_token']}",
+        "Authorization": f"Bearer {active_auth()['access_token']}",
         "x-officeid": str(user_cfg()["pol_office_id"]),
-        "x-selecteduserid": CTX["sub"],
+        "x-selecteduserid": active_auth()["sub"],
         "Accept": "application/json"
     }
 
 async def pol_detect_office():
     """Primeiro login do usuário: usa o primeiro escritório ao qual ele pertence."""
     status, _, body = await http_request(f"{GATEWAY_URL}/services/lawoffice/api/office/offices",
-                                   headers={"Authorization": f"Bearer {CTX['auth']['access_token']}", "Accept": "application/json"})
+                                   headers={"Authorization": f"Bearer {active_auth()['access_token']}", "Accept": "application/json"})
     try:
         offices = json.loads(body.decode("utf-8")) if status == 200 else []
         if offices:
@@ -222,7 +245,9 @@ async def pol_detect_office():
 async def pol_fetch_all(path: str, label: str) -> List[Dict[str, Any]]:
     """Todas as páginas (size=100&page=N); o gateway devolve só a primeira sem `page`."""
     if not await pol_authenticate():
-        CTX["error"] = "Sessão do POL expirada ou inválida: saia e entre de novo."
+        api = CTX.get("data_auth")
+        CTX["error"] = (f"A conta da API ({(STORE['users'][CTX['sub']].get('api') or {}).get('user', '')}) precisa ser autenticada de novo: "
+                        "informe a senha em Configurações → Conta da API." if api else "Sessão do POL expirada ou inválida: saia e entre de novo.")
         return []
     out: List[Dict[str, Any]] = []
     for page in range(50):
@@ -998,6 +1023,26 @@ INDEX_HTML = """<!DOCTYPE html>
               <input type="number" id="cfg-pol-interval" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
             </div>
           </div>
+
+          <div class="border-t border-zinc-800 pt-4 space-y-3">
+            <h4 class="font-semibold text-sm text-zinc-200">Conta da API</h4>
+            <p class="text-xs text-zinc-500">Usuário e senha usados para buscar os dados no POL. Por padrão é a conta do login, mas pode ser outra. A senha não fica guardada: o app guarda só um token de acesso.</p>
+            <p id="api-status" class="text-xs text-zinc-400">Carregando...</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">Usuário da API (e-mail):</label>
+                <input type="text" id="cfg-api-user" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-zinc-400 font-semibold block mb-1">Senha da API:</label>
+                <input type="password" id="cfg-api-pass" autocomplete="new-password" class="bg-zinc-800 border border-zinc-700 text-xs p-2 rounded w-full outline-none">
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button onclick="saveApiAccount()" class="bg-zinc-700 hover:bg-zinc-600 text-xs font-semibold px-3 py-2 rounded-lg">💾 Salvar conta da API</button>
+              <button onclick="useLoginAccount()" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-2 rounded-lg text-zinc-300">↩ Usar a conta do login</button>
+            </div>
+          </div>
           <div class="flex justify-between gap-2 pt-2">
             <button onclick="sendReport()" id="btn-send-report" title="Sincroniza e envia agora o relatório para todos os canais configurados" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold px-4 py-2 rounded-lg transition">📨 Enviar relatório agora</button>
             <button onclick="saveConfig()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">Salvar Configurações</button>
@@ -1448,6 +1493,36 @@ INDEX_HTML = """<!DOCTYPE html>
       setEmailMethod(method);
       loadGmail();
       loadSmtp();
+      loadApiAccount();
+    }
+
+    async function loadApiAccount() {
+      const a = await (await fetch('/api/api-account')).json();
+      document.getElementById('cfg-api-user').value = a.user || '';
+      document.getElementById('api-status').innerHTML = a.separate
+        ? '🟡 A API usa uma conta própria: <b>' + a.user + '</b>. O login continua sendo ' + a.login_user + '.'
+        : '🟢 A API usa a mesma conta do login (<b>' + a.login_user + '</b>).';
+    }
+
+    async function saveApiAccount() {
+      const res = await fetch('/api/api-account', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: document.getElementById('cfg-api-user').value, password: document.getElementById('cfg-api-pass').value })
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Não foi possível salvar a conta da API.'); return; }
+      document.getElementById('cfg-api-pass').value = '';
+      await loadApiAccount();
+      alert('Conta da API salva! Carregando os dados dessa conta...');
+      triggerSync();
+    }
+
+    async function useLoginAccount() {
+      await fetch('/api/api-account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) });
+      document.getElementById('cfg-api-pass').value = '';
+      await loadApiAccount();
+      alert('A API voltou a usar a conta do login. Carregando os dados...');
+      triggerSync();
     }
 
     function emailMethod() {
@@ -1655,6 +1730,7 @@ async def resolve_session(cookie_header: str) -> Optional[str]:
         SESSIONS[key] = auth
     CTX["sub"], CTX["auth"] = auth["sub"], auth
     migrate_channel_flags(user_cfg())
+    activate_api_auth()
     return key
 
 async def do_login(body_bytes: bytes):
@@ -1691,6 +1767,7 @@ async def do_login(body_bytes: bytes):
     auth = SESSIONS[key] = {"sub": sub}
     CTX["sub"], CTX["auth"] = sub, auth
     set_tokens(auth, tokens)
+    activate_api_auth()
     if not user["config"]["pol_office_id"]:
         await pol_detect_office()
     log("INFO", f"Login realizado para {email}.")
@@ -1701,7 +1778,7 @@ def redirect(location: str) -> Tuple[int, str, bytes, List[Tuple[str, str]]]:
     return 302, "text/plain", b"", [("Location", location)]
 
 async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header: str = "", query: str = "", origin: str = "") -> Tuple[int, str, bytes, List[Tuple[str, str]]]:
-    CTX["sub"], CTX["auth"] = None, None
+    CTX["sub"], CTX["auth"], CTX["data_auth"] = None, None, None
     if path == "/api/login" and method == "POST":
         return await do_login(body_bytes)
 
@@ -1790,6 +1867,53 @@ async def handle_route(path: str, method: str, body_bytes: bytes, cookie_header:
             "connected": bool(g.get("refresh_token")), "email": g.get("email", ""),
             "redirect_uri": origin + GMAIL_CALLBACK,
         })
+
+    # 3b. Conta da API (usuário/senha usados para buscar os dados no POL; pode ser diferente do login).
+    # A senha nunca é guardada: só o refresh token (como no "Lembrar").
+    if path == "/api/api-account":
+        user = STORE["users"][CTX["sub"]]
+        if method == "POST":
+            try:
+                req = json.loads(body_bytes.decode("utf-8"))
+            except Exception as e:
+                return json_response(400, {"error": str(e)})
+            if req.get("clear"):  # voltar a usar a conta do login
+                user.pop("api", None)
+                API_AUTH.pop(CTX["sub"], None)
+                CTX["data_auth"] = None
+                await pol_detect_office()
+                save_store()
+                log("INFO", "A API voltou a usar a conta do login.")
+                return json_response(200, {"status": "ok"})
+            api_user = (req.get("user") or "").strip()
+            password = req.get("password") or ""
+            if not api_user:
+                return json_response(400, {"error": "Informe o usuário da conta da API."})
+            if not password:
+                return json_response(400, {"error": "Informe a senha da conta da API (ela não fica salva: só um token de acesso)."})
+            data, err = await pol_login(api_user, password, True)
+            if not data:
+                return json_response(400, {"error": err})
+            try:
+                api_sub = jwt_claims(data["access_token"]).get("sub", "")
+            except Exception:
+                return json_response(400, {"error": "Resposta inesperada do POL ao autenticar a conta da API."})
+            if api_sub == CTX["sub"]:  # é a própria conta do login
+                user.pop("api", None)
+                API_AUTH.pop(CTX["sub"], None)
+            else:
+                user["api"] = {"user": api_user, "sub": api_sub, "refresh_token": data.get("refresh_token")}
+                API_AUTH.pop(CTX["sub"], None)
+            activate_api_auth()
+            if CTX.get("data_auth"):
+                set_tokens(CTX["data_auth"], data)
+            await pol_detect_office()  # o escritório pode ser outro
+            save_store()
+            log("INFO", f"Conta da API: {api_user if api_sub != CTX['sub'] else 'a mesma do login'}.")
+            return json_response(200, {"status": "ok"})
+        api = user.get("api") or {}
+        return json_response(200, {"user": api.get("user") or user["email"], "separate": bool(api.get("refresh_token")),
+                                   "login_user": user["email"]})
 
     # 4a. E-mail por senha de app do Google (SMTP)
     if path == "/api/smtp":
@@ -2053,6 +2177,7 @@ async def run_cron() -> bool:
         migrate_channel_flags(user["config"])
         user["last_check"] = now
         CTX["sub"], CTX["auth"] = sub, {"sub": sub, "refresh_token": user["refresh_token"], "expiry": 0}
+        activate_api_auth()
         if not await pol_authenticate():
             continue
         tasks = await pol_get_tasks()
@@ -2068,7 +2193,7 @@ async def run_cron() -> bool:
         if any(ok for _, ok, _ in await send_report(classified)):
             user["notified"] = {"date": today, "ids": sorted(sent_ids | ids)}
             log("INFO", f"Monitor: resumo enviado ({len(ids - sent_ids)} item(ns) novo(s)).")
-    CTX["sub"], CTX["auth"] = None, None
+    CTX["sub"], CTX["auth"], CTX["data_auth"] = None, None, None
     if changed:
         save_store()
     return changed

@@ -87,6 +87,7 @@ public partial class MainWindow : Window
         TxtWaRecipients.Text = string.Join(", ", _config.OpenWaRecipients);
 
         TxtOffice.Text = _config.PolOfficeId;
+        UpdateApiStatus();
         SetIntervalUi(_config.CheckIntervalMinutes);
         TxtDailyHour.Text = _config.NotifyDailyHour;
 
@@ -610,6 +611,46 @@ public partial class MainWindow : Window
             Alert.Show(this, "Sucesso", "Autenticação na API do POL ADV realizada com sucesso!");
         }
         else Alert.Show(this, "Erro", "Falha na autenticação. Use \"Trocar Usuário\" para entrar novamente.", isError: true);
+    }
+
+    void UpdateApiStatus()
+    {
+        TxtApiUser.Text = _pol.ApiUser;
+        LblApiStatus.Text = _pol.UsesLoginAccount
+            ? $"A API usa a mesma conta do login ({_pol.ApiUser})."
+            : $"A API usa uma conta própria: {_pol.ApiUser}. O login do app continua sendo {_config.PolEmail}.";
+        TxtOffice.Text = _config.PolOfficeId;
+    }
+
+    async void OnSaveApi(object sender, RoutedEventArgs e)
+    {
+        var b = (Button)sender;
+        b.IsEnabled = false;
+        try
+        {
+            await _pol.SetApiAccount(TxtApiUser.Text, TxtApiPass.Password);
+            TxtApiPass.Clear();
+            UpdateApiStatus();
+            UpdateData(new ClassifiedItems(), []); // os dados em tela eram da conta anterior
+            Alert.Show(this, "Sucesso", "Conta da API salva! Clique em Sincronizar Agora para carregar os dados dessa conta.");
+        }
+        catch (LoginException ex) { Alert.Show(this, "Erro", ex.Message, isError: true); }
+        finally { b.IsEnabled = true; }
+    }
+
+    async void OnApiUseLogin(object sender, RoutedEventArgs e)
+    {
+        var b = (Button)sender;
+        b.IsEnabled = false;
+        try
+        {
+            await _pol.UseLoginAccount();
+            TxtApiPass.Clear();
+            UpdateApiStatus();
+            Alert.Show(this, "Sucesso", "A API voltou a usar a conta do login. Clique em Sincronizar Agora para recarregar os dados.");
+        }
+        catch (LoginException ex) { Alert.Show(this, "Erro", ex.Message, isError: true); }
+        finally { b.IsEnabled = true; }
     }
 
     void OnSavePol(object sender, RoutedEventArgs e)
