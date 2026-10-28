@@ -102,14 +102,11 @@ public static class Formatter
     /// <summary>Urgente = há prazo vencendo hoje; senão é o resumo diário.</summary>
     public static bool IsUrgent(ClassifiedItems c) => c.Today.Count > 0;
 
-    public static string EmailSubject(ClassifiedItems c)
-    {
-        var day = DateTime.Today.ToString("dd/MM", Br);
-        if (IsUrgent(c))
-            return $"URGENTE: {Plural(c.Today.Count, "prazo vence", "prazos vencem")} hoje — POL ADV {day}";
-        var next = c.Tomorrow.Count + c.ThisWeek.Count;
-        return next > 0 ? $"Prazos da semana: {Plural(next, "item", "itens")} — POL ADV {day}" : $"Resumo de prazos — POL ADV {day}";
-    }
+    /// <summary>Título do e-mail (também usado no corpo).</summary>
+    public static string EmailTitle() => $"Publicações Online - Relatório de Tarefas Diário para {DateTime.Today.ToString("dd/MM/yyyy", Br)}";
+
+    /// <summary>Assunto = título; com prazo vencendo hoje ganha o prefixo URGENTE.</summary>
+    public static string EmailSubject(ClassifiedItems c) => (IsUrgent(c) ? "URGENTE: " : "") + EmailTitle();
 
     static string Plural(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
 
@@ -129,8 +126,6 @@ public static class Formatter
     public static string ToHtml(ClassifiedItems c, string userName = "")
     {
         var today = DateTime.Today;
-        var longDate = today.ToString("dddd, d 'de' MMMM 'de' yyyy", Br);
-        longDate = char.ToUpper(longDate[0]) + longDate[1..];
         var urgent = IsUrgent(c);
 
         string Row(Item it)
@@ -160,10 +155,12 @@ public static class Formatter
                 """;
         }
 
-        string Section(string title, string color, List<Item> items, int limit = int.MaxValue)
+        string Section(string title, string color, List<Item> items, int limit = int.MaxValue, string? empty = null)
         {
-            if (items.Count == 0) return "";
-            var rows = string.Concat(items.Take(limit).Select(Row));
+            if (items.Count == 0 && empty == null) return "";
+            var rows = items.Count == 0
+                ? $"<tr><td colspan=\"2\" style=\"padding:14px 0;border-top:1px solid {Rule};font-family:{Sans};font-size:14px;line-height:20px;color:{Muted};\">{empty}</td></tr>"
+                : string.Concat(items.Take(limit).Select(Row));
             var more = items.Count > limit
                 ? $"<tr><td colspan=\"2\" style=\"padding:12px 0 0;border-top:1px solid {Rule};font-family:{Sans};font-size:13px;color:{Muted};\">E mais {items.Count - limit} no <a href=\"https://office.pol.adv.br/\" style=\"color:{Ink};\">POL ADV</a>.</td></tr>"
                 : "";
@@ -182,16 +179,11 @@ public static class Formatter
                 """;
         }
 
-        var parts = new List<string>();
-        if (c.Today.Count > 0 && !urgent) parts.Add($"{Plural(c.Today.Count, "vence", "vencem")} hoje"); // no urgente o título já diz
-        if (c.Tomorrow.Count > 0) parts.Add($"{c.Tomorrow.Count} nos próximos 2 dias");
-        if (c.ThisWeek.Count > 0) parts.Add($"{c.ThisWeek.Count} ainda nesta semana");
-        if (c.Overdue.Count > 0) parts.Add(Plural(c.Overdue.Count, "atrasado ou sem prazo", "atrasados ou sem prazo"));
-        var summary = parts.Count == 0 ? "Nenhum prazo pendente." : string.Join(" · ", parts) + ".";
-        var headline = urgent
-            ? Plural(c.Today.Count, "prazo vence hoje", "prazos vencem hoje")
-            : $"Prazos de {today.ToString("d 'de' MMMM", Br)}";
-        var greeting = string.IsNullOrWhiteSpace(userName) ? "" : $"{H(userName)}, ";
+        var title = EmailTitle();
+        var name = string.IsNullOrWhiteSpace(userName) ? "Olá" : H(userName);
+        var intro = $"{name}, estas são suas tarefas e agenda para os próximos dias.";
+        // Pré-visualização da caixa de entrada (oculta no corpo)
+        var preview = c.Today.Count > 0 ? $"{Plural(c.Today.Count, "item vence", "itens vencem")} hoje." : "Nenhuma tarefa/agendamento para hoje.";
         var headColor = urgent ? "#991b1b" : Ink;
         var band = urgent
             ? $"<tr><td style=\"background:#b91c1c;padding:10px 32px;font-family:{Sans};font-size:12px;line-height:16px;font-weight:700;letter-spacing:0.08em;color:#ffffff;text-transform:uppercase;\">Atenção imediata</td></tr>"
@@ -200,17 +192,16 @@ public static class Formatter
 
         return $"""
             <!DOCTYPE html>
-            <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{H(headline)}</title></head>
+            <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{H(title)}</title></head>
             <body style="margin:0;padding:0;background:{Desk};">
-              <div style="display:none;max-height:0;overflow:hidden;color:{Desk};">{H(summary)}</div>
+              <div style="display:none;max-height:0;overflow:hidden;color:{Desk};">{H(preview)}</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{Desk};">
                 <tr><td align="center" style="padding:24px 12px;">
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;background:{Paper};border-radius:12px;overflow:hidden;">
                     {band}
-                    <tr><td style="padding:28px 32px 0;font-family:{Sans};font-size:13px;line-height:18px;color:{Muted};">{H(longDate)}</td></tr>
-                    <tr><td style="padding:6px 32px 0;font-family:{Serif};font-size:28px;line-height:34px;font-weight:700;letter-spacing:-0.01em;color:{headColor};">{H(headline)}</td></tr>
-                    <tr><td style="padding:10px 32px 0;font-family:{Sans};font-size:15px;line-height:22px;color:{Ink};">{greeting}{H(summary)}</td></tr>
-                    {Section("Vence hoje", "#b91c1c", c.Today)}
+                    <tr><td style="padding:28px 32px 0;font-family:{Serif};font-size:24px;line-height:31px;font-weight:700;letter-spacing:-0.01em;color:{headColor};">{H(title)}</td></tr>
+                    <tr><td style="padding:12px 32px 0;font-family:{Sans};font-size:15px;line-height:22px;color:{Ink};">{intro}</td></tr>
+                    {Section("Hoje", "#b91c1c", c.Today, empty: "Nenhuma tarefa/agendamento para hoje.")}
                     {Section("Próximos 2 dias", "#b45309", c.Tomorrow)}
                     {Section("Ainda nesta semana", "#1d4ed8", c.ThisWeek)}
                     {Section("Atrasados e sem prazo", Muted, c.Overdue, limit: 10)}

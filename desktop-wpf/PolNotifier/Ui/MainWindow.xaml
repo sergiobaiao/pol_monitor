@@ -106,7 +106,7 @@
                                     <StackPanel Margin="8,0,0,0"><TextBlock Text="Porta:" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TxtSmtpPort"/></StackPanel>
                                     <StackPanel Margin="0,0,8,0"><TextBlock Text="Usuário / E-mail Remetente:" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TxtSmtpUser"/></StackPanel>
                                     <StackPanel Margin="8,0,0,0"><TextBlock Text="Senha de Aplicativo:" Style="{StaticResource FieldLabel}"/><PasswordBox x:Name="TxtSmtpPass"/></StackPanel>
-                                    <StackPanel Margin="0,0,8,0"><TextBlock Text="Destinatários (separados por vírgula):" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TxtSmtpRecipients"/></StackPanel>
+                                    <StackPanel Margin="0,0,8,0"><TextBlock Text="Destinatários (um ou mais, separados por vírgula ou ;):" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TxtSmtpRecipients"/></StackPanel>
                                     <StackPanel Margin="8,0,0,0" VerticalAlignment="Bottom">
                                         <CheckBox x:Name="ChkSmtpSsl" Content="SSL direto (porta 465)" Margin="0,8,0,0"/>
                                         <Button Content="🧪 Testar E-mail" Style="{StaticResource FlatButton}" HorizontalAlignment="Right" Margin="0,8,0,0" Click="OnTestEmail"/>
